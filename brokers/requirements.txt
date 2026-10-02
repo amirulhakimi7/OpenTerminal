@@ -1,3 +1,4 @@
 moomoo-api>=10.11
 fastapi
 uvicorn
+async-rithmic==1.6.6  # pinned: lucid_adapter uses its internals

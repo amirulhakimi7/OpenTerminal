@@ -71,6 +71,7 @@ def to_account(acc: Mapping[str, Any], funds: Mapping[str, Any] | None, markets:
         cash=num(f.get("cash")),
         market_value=num(f.get("market_val")),
         unrealized_pl=num(f.get("unrealized_pl")),
+        realized_today=None,
     )
 
 

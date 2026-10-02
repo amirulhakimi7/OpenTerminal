@@ -18,6 +18,7 @@ class Account(TypedDict):
     cash: float | None
     market_value: float | None
     unrealized_pl: float | None
+    realized_today: float | None  # session's closed P&L, where the broker reports it
 
 
 class Position(TypedDict):

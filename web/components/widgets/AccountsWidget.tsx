@@ -15,6 +15,7 @@ type Account = {
   cash: number | null;
   market_value: number | null;
   unrealized_pl: number | null;
+  realized_today: number | null;
 };
 type Position = {
   symbol: string;
@@ -34,7 +35,7 @@ type BrokerSummary = { broker: string; env: string; accounts: Account[]; positio
 const BROKERS: Array<{ id: BrokerId; label: string; asset: string; ready: boolean; hint?: string }> = [
   { id: "moomoo", label: "moomoo", asset: "Stocks", ready: true },
   { id: "hata", label: "Hata", asset: "Crypto", ready: false, hint: "Waiting for Hata API documentation (support@hata.io)." },
-  { id: "lucid", label: "Lucid", asset: "Futures", ready: false, hint: "Connects through your futures platform (Rithmic / Tradovate); not set up yet." },
+  { id: "lucid", label: "Lucid", asset: "Futures", ready: true },
 ];
 
 // Fractional shares (moomoo sells them) need their decimals: 2.3128, not 2.
@@ -81,6 +82,12 @@ function BrokerView({ broker }: { broker: string }) {
                 <span className={a.unrealized_pl >= 0 ? "up" : "down"}>{money(a.unrealized_pl, a.currency)}</span>
               )}
             </div>
+            {a.realized_today !== null && (
+              <div className="flex justify-between text-[11px] mt-0.5">
+                <span className="dim">Today (closed)</span>
+                <span className={a.realized_today >= 0 ? "up" : "down"}>{money(a.realized_today, a.currency)}</span>
+              </div>
+            )}
           </div>
         ))}
       </div>

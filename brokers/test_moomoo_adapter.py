@@ -40,6 +40,7 @@ def test_account_happy_path() -> None:
         "cash": 2500.0,
         "market_value": 8000.5,
         "unrealized_pl": -120.25,
+        "realized_today": None,
     }
 
 

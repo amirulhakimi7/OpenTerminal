@@ -30,10 +30,42 @@ step for the account and position queries it uses, so it shouldn't need your
 trade password. If OpenD ever asks for one on this service's behalf, stop and
 check why before entering it.
 
-## Hata (crypto), Lucid (futures)
+## Lucid (futures, via Rithmic)
 
-Not connected yet. Each will be a new `<broker>_adapter.py` returning the same
-`BrokerSummary` shape from `schema.py`.
+Built, **off by default**. Lucid has no API of its own and Tradesea has no
+public API, so this reads the account straight from Rithmic, the feed behind
+Tradesea for Lucid accounts. It opens the **PnL plant only**, never the order
+plant, and holds one connection open instead of logging in per request.
+
+Before setting `LUCID_ENABLED=1`, all three must be true:
+
+1. **Lucid** confirms API access is enabled on your Rithmic user ID, and what
+   it costs.
+2. **Lucid or Rithmic** confirms a PnL-plant connection will **not** log your
+   Tradesea session out. Rithmic can drop an existing session when the same
+   user logs in again; losing Tradesea with a position open is the failure to
+   avoid.
+3. **Rithmic** has passed this app through conformance (rapi@rithmic.com) and
+   given you the production gateway and approved app name.
+
+Then fill `brokers/.env` yourself (never paste credentials into a chat):
+
+```
+LUCID_ENABLED=1
+LUCID_USER=
+LUCID_PASSWORD=
+LUCID_SYSTEM=
+LUCID_GATEWAY=
+LUCID_APP_NAME=
+LUCID_ACCOUNT_ID=
+```
+
+The first time, enable it while **flat** and with Tradesea open, and watch
+Tradesea for a disconnect.
+
+## Hata (crypto)
+
+Not connected yet: Hata's API docs are only available from support@hata.io.
 
 ## Tests
 
