@@ -18,7 +18,10 @@ export type WidgetType =
   | "calendar"
   | "insider"
   | "tv"
-  | "recap";
+  | "recap"
+  | "signals"
+  | "risk"
+  | "journal";
 
 export type WidgetInstance = {
   id: string;
@@ -26,6 +29,11 @@ export type WidgetInstance = {
   symbol?: string;
   linked: boolean; // follows the globally active symbol
 };
+
+// What the trader reads off the LucidFlex dashboard; there is no broker link yet.
+// pnlFromJournal: take today's P&L from the trade journal instead of sessionPnl.
+// Optional because workspaces saved before it existed lack it; absent means on.
+export type AccountInput = { balance: number; peakClose: number; sessionPnl: number; pnlFromJournal?: boolean };
 
 export type LayoutItem = { i: string; x: number; y: number; w: number; h: number };
 
@@ -35,6 +43,8 @@ type TerminalState = {
   layout: LayoutItem[];
   watchlist: string[];
   commandOpen: boolean;
+  account: AccountInput;
+  setAccount: (a: Partial<AccountInput>) => void;
   setActiveSymbol: (s: string) => void;
   setCommandOpen: (open: boolean) => void;
   addWidget: (type: WidgetType, symbol?: string) => void;
@@ -45,6 +55,7 @@ type TerminalState = {
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   resetWorkspace: () => void;
+  applyPreset: (name: PresetName) => void;
 };
 
 const DEFAULT_WIDGETS: WidgetInstance[] = [
@@ -79,6 +90,68 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
   insider: { w: 7, h: 9 },
   tv: { w: 6, h: 11 },
   recap: { w: 5, h: 12 },
+  signals: { w: 7, h: 10 },
+  risk: { w: 5, h: 12 },
+  journal: { w: 7, h: 9 },
+};
+
+export type PresetName = "futures" | "crypto" | "stocks";
+
+type Preset = { widgets: WidgetInstance[]; layout: LayoutItem[]; activeSymbol?: string };
+
+// One-click workspaces, one per market the trader works. Widget ids are fixed
+// so applying a preset twice gives the same layout rather than duplicates.
+export const PRESETS: Record<PresetName, Preset> = {
+  futures: {
+    widgets: [
+      { id: "p-signals", type: "signals", linked: false },
+      { id: "p-risk", type: "risk", linked: false },
+      { id: "p-journal", type: "journal", linked: false },
+      { id: "p-news", type: "news", linked: true },
+      { id: "p-calendar", type: "calendar", linked: false },
+    ],
+    layout: [
+      { i: "p-signals", x: 0, y: 0, w: 7, h: 11 },
+      { i: "p-risk", x: 7, y: 0, w: 5, h: 14 },
+      { i: "p-journal", x: 0, y: 11, w: 7, h: 10 },
+      { i: "p-news", x: 7, y: 14, w: 5, h: 7 },
+      { i: "p-calendar", x: 0, y: 21, w: 12, h: 11 },
+    ],
+  },
+  crypto: {
+    activeSymbol: "BTC",
+    widgets: [
+      { id: "p-chart", type: "chart", linked: true },
+      { id: "p-crypto", type: "crypto", linked: false },
+      { id: "p-journal", type: "journal", linked: false },
+      { id: "p-news", type: "news", linked: false },
+    ],
+    layout: [
+      { i: "p-chart", x: 0, y: 0, w: 7, h: 12 },
+      { i: "p-crypto", x: 7, y: 0, w: 5, h: 12 },
+      { i: "p-journal", x: 0, y: 12, w: 7, h: 9 },
+      { i: "p-news", x: 7, y: 12, w: 5, h: 9 },
+    ],
+  },
+  stocks: {
+    activeSymbol: "SPY",
+    widgets: [
+      { id: "p-chart", type: "chart", linked: true },
+      { id: "p-quote", type: "quote", linked: true },
+      { id: "p-watchlist", type: "watchlist", linked: false },
+      { id: "p-heatmap", type: "heatmap", linked: false },
+      { id: "p-news", type: "news", linked: true },
+      { id: "p-journal", type: "journal", linked: false },
+    ],
+    layout: [
+      { i: "p-chart", x: 0, y: 0, w: 7, h: 12 },
+      { i: "p-quote", x: 7, y: 0, w: 5, h: 6 },
+      { i: "p-watchlist", x: 7, y: 6, w: 5, h: 6 },
+      { i: "p-heatmap", x: 0, y: 12, w: 7, h: 10 },
+      { i: "p-news", x: 7, y: 12, w: 5, h: 10 },
+      { i: "p-journal", x: 0, y: 22, w: 12, h: 9 },
+    ],
+  },
 };
 
 export const useTerminal = create<TerminalState>()(
@@ -89,6 +162,8 @@ export const useTerminal = create<TerminalState>()(
       layout: DEFAULT_LAYOUT,
       watchlist: ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"],
       commandOpen: false,
+      account: { balance: 50000, peakClose: 50000, sessionPnl: 0 },
+      setAccount: (a) => set((st) => ({ account: { ...st.account, ...a } })),
       setActiveSymbol: (s) => set({ activeSymbol: s.toUpperCase() }),
       setCommandOpen: (open) => set({ commandOpen: open }),
       addWidget: (type, symbol) =>
@@ -121,6 +196,11 @@ export const useTerminal = create<TerminalState>()(
         })),
       removeFromWatchlist: (s) => set((st) => ({ watchlist: st.watchlist.filter((x) => x !== s) })),
       resetWorkspace: () => set({ widgets: DEFAULT_WIDGETS, layout: DEFAULT_LAYOUT }),
+      applyPreset: (name) =>
+        set((st) => {
+          const p = PRESETS[name];
+          return { widgets: p.widgets, layout: p.layout, activeSymbol: p.activeSymbol ?? st.activeSymbol };
+        }),
     }),
     { name: "openterminal-workspace" }
   )

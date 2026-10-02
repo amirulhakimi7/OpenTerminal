@@ -3,6 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { enableNotifications, notificationsEnabled, notificationsSupported } from "../lib/notify";
+import { fmtCountdown, useCmeSession, type CmePhase } from "../lib/session";
 import { useTerminal } from "../store/terminal";
 
 type Status = {
@@ -20,10 +22,10 @@ function Clock({ tz, label }: { tz: string; label: string }) {
   }, []);
   if (!now) return null;
   return (
-    <span className="dim">
-      {label}{" "}
-      <span className="text-[var(--text)]">
-        {now.toLocaleTimeString("en-GB", { timeZone: tz, hour12: false })}
+    <span className="flex flex-col leading-tight">
+      <span className="dim text-[9px] tracking-wider">{label}</span>
+      <span className="text-[var(--text)] num text-[11px]">
+        {now.toLocaleTimeString("en-GB", { timeZone: tz, hour12: false, hour: "2-digit", minute: "2-digit" })}
       </span>
     </span>
   );
@@ -35,6 +37,43 @@ function marketStateNY(): { label: string; open: boolean } {
   const mins = ny.getHours() * 60 + ny.getMinutes();
   const open = day >= 1 && day <= 5 && mins >= 570 && mins < 960; // 09:30–16:00
   return { label: open ? "NYSE OPEN" : "NYSE CLOSED", open };
+}
+
+const PHASE_LABEL: Record<CmePhase, { text: string; cls: string }> = {
+  open: { text: "CME OPEN", cls: "up" },
+  force_flat: { text: "FORCE FLAT", cls: "down" },
+  past_deadline: { text: "PAST 16:45", cls: "down" },
+  maintenance: { text: "CME BREAK", cls: "amber" },
+  closed: { text: "CME CLOSED", cls: "" },
+};
+
+function CmeStatus() {
+  const { session, minutesLeft, error } = useCmeSession();
+  if (error) return <span className="pill dim" title="Start the cl-signals service">● CME offline</span>;
+  if (!session) return null;
+  const label = PHASE_LABEL[session.phase];
+  const counting = session.phase === "open" || session.phase === "force_flat";
+  return (
+    <span className={`pill ${label.cls} ${label.cls ? "" : "dim"}`} title="From the CME calendar in the Trading repo">
+      ● {label.text}
+      {counting && <span className="text-[var(--text)] font-normal num">· flat in {fmtCountdown(minutesLeft)}</span>}
+    </span>
+  );
+}
+
+function AlertsToggle() {
+  const [on, setOn] = useState(false);
+  useEffect(() => setOn(notificationsEnabled()), []);
+  if (!notificationsSupported()) return null;
+  return (
+    <button
+      className={`w-7 h-7 rounded-md grid place-items-center hover:bg-[var(--panel-3)] ${on ? "" : "opacity-60"}`}
+      title={on ? "Desktop alerts on (signals, FORCE FLAT)" : "Enable desktop alerts for new signals and FORCE FLAT"}
+      onClick={async () => setOn(await enableNotifications())}
+    >
+      {on ? "🔔" : "🔕"}
+    </button>
+  );
 }
 
 export default function TopBar() {
@@ -50,26 +89,40 @@ export default function TopBar() {
   const healthy = status?.providers.filter((p) => p.ok > 0) ?? [];
 
   return (
-    <header className="flex items-center gap-4 px-3 h-8 bg-[var(--panel-2)] border-b border-[var(--border)] text-[11px] shrink-0">
-      <span className="amber font-bold tracking-widest">OPENTERMINAL</span>
-      <span className={market.open ? "up" : "down"}>● {market.label}</span>
-      <Clock tz="America/New_York" label="NY" />
-      <Clock tz="Europe/Rome" label="MIL" />
-      <Clock tz="Europe/London" label="LDN" />
-      <Clock tz="Asia/Tokyo" label="TYO" />
+    <header className="flex items-center gap-3 px-4 h-12 bg-[var(--panel)]/80 backdrop-blur border-b border-[var(--border)] text-[11px] shrink-0">
+      <span className="flex items-center gap-2 mr-1 shrink-0">
+        <span className="w-6 h-6 rounded-md grid place-items-center text-[10px] font-bold text-black bg-gradient-to-br from-[#f5a524] to-[#f97316]">
+          OT
+        </span>
+        <span className="hidden md:inline font-semibold tracking-wide text-[13px]">OpenTerminal</span>
+      </span>
+      <span className={`pill hidden lg:inline-flex ${market.open ? "up" : "dim"}`}>● {market.open ? "NYSE OPEN" : "NYSE CLOSED"}</span>
+      <CmeStatus />
       <button
-        className="term-btn flex-1 max-w-md text-left dim"
+        className="flex-1 min-w-[140px] max-w-md mx-auto flex items-center gap-2 h-8 px-3 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] hover:border-[var(--border-strong)] dim text-left transition-colors"
         onClick={() => setCommandOpen(true)}
       >
-        {activeSymbol} — search symbol… <span className="float-right">⌘K</span>
+        <span>⌕</span>
+        <span className="text-[var(--text)] font-medium">{activeSymbol}</span>
+        <span className="truncate">Search symbol…</span>
+        <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded border border-[var(--border-strong)]">⌘K</kbd>
       </button>
-      <span className="dim ml-auto">
-        feeds:{" "}
-        {healthy.length > 0
-          ? healthy.map((p) => `${p.name} ${p.lastLatencyMs ?? "—"}ms`).join(" · ")
-          : "connecting…"}
+      <span className="hidden xl:flex items-center gap-4 px-3">
+        <Clock tz="America/New_York" label="NEW YORK" />
+        <Clock tz="Asia/Kuala_Lumpur" label="KL" />
+        <Clock tz="Europe/London" label="LONDON" />
+        <Clock tz="Asia/Tokyo" label="TOKYO" />
       </span>
-      <span className={status?.ai ? "up" : "dim"}>AI {status?.ai ? "●" : "○"}</span>
+      <span
+        className={`pill hidden lg:inline-flex ${healthy.length > 0 ? "up" : "dim"}`}
+        title={healthy.map((p) => `${p.name} ${p.lastLatencyMs ?? "—"}ms`).join("\n") || "connecting…"}
+      >
+        ● {healthy.length > 0 ? `${healthy.length} feeds` : "connecting"}
+      </span>
+      <span className={`pill ${status?.ai ? "up" : "dim"}`} title={status?.ai ? "AI assistant available" : "Set ANTHROPIC_API_KEY to enable"}>
+        AI
+      </span>
+      <AlertsToggle />
     </header>
   );
 }

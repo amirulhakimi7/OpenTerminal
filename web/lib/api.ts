@@ -62,6 +62,12 @@ export function fmt(n: number | null | undefined, digits = 2): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
+/** Dollars with the sign in front of the symbol: −$510.00, not $-510.00. */
+export function fmtUsd(n: number | null | undefined, digits = 2): string {
+  if (n === null || n === undefined || !isFinite(n)) return "—";
+  return (n < 0 ? "−$" : "$") + fmt(Math.abs(n), digits);
+}
+
 export function fmtBig(n: number | null | undefined): string {
   if (n === null || n === undefined || !isFinite(n)) return "—";
   const abs = Math.abs(n);

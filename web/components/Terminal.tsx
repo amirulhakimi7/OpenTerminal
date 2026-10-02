@@ -5,6 +5,7 @@ import TopBar from "./TopBar";
 import Sidebar from "./Sidebar";
 import Workspace from "./Workspace";
 import CommandPalette from "./CommandPalette";
+import SessionBanner from "./SessionBanner";
 import { useTerminal } from "../store/terminal";
 
 export default function Terminal() {
@@ -30,7 +31,8 @@ export default function Terminal() {
           "8": () => addWidget("portfolio"),
           "9": () => addWidget("ai"),
         };
-        const fn = map[e.key];
+        // e.key under Option on macOS is a symbol (⌥1 gives "¡"), so match the physical key.
+        const fn = map[e.code.replace("Digit", "")];
         if (fn) {
           e.preventDefault();
           fn();
@@ -44,6 +46,7 @@ export default function Terminal() {
   return (
     <div className="flex flex-col h-screen">
       <TopBar />
+      <SessionBanner />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 overflow-auto">

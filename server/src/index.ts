@@ -3,6 +3,8 @@ import cors from "cors";
 import { marketRouter } from "./routes/market.js";
 import { portfolioRouter } from "./routes/portfolio.js";
 import { aiRouter } from "./routes/ai.js";
+import { signalsRouter } from "./routes/signals.js";
+import { journalRouter } from "./routes/journal.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
@@ -29,6 +31,10 @@ const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
 app.use(cors({ origin: webOrigin }));
 app.use(express.json());
 
+// Read-only relay to the local CL/MCL signal service. Mounted before
+// marketRouter so its /api routes never see this path.
+app.use("/api/signals", rateLimit({ windowMs: 60_000, max: 60 }), signalsRouter);
+
 // No API key here by design (market.ts routes proxy free, keyless public data),
 // but still bounded per-IP: unlike /api/ai and /api/portfolios, an unauthenticated
 // caller could otherwise repeat the multi-provider fan-out in market.ts (up to
@@ -37,6 +43,7 @@ app.use(express.json());
 app.use("/api", rateLimit({ windowMs: 60_000, max: 240 }), marketRouter);
 // Portfolio data and the paid AI endpoint require a shared secret; see auth.ts.
 app.use("/api/portfolios", requireApiKey, portfolioRouter);
+app.use("/api/journal", requireApiKey, journalRouter);
 app.use(
   "/api/ai",
   requireApiKey,

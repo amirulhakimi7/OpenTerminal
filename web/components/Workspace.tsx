@@ -20,6 +20,9 @@ import CalendarWidget from "./widgets/CalendarWidget";
 import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
+import SignalsWidget from "./widgets/SignalsWidget";
+import RiskWidget from "./widgets/RiskWidget";
+import JournalWidget from "./widgets/JournalWidget";
 
 const Grid = WidthProvider(GridLayout);
 
@@ -40,6 +43,9 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "insider": return <InsiderWidget widget={widget} />;
     case "tv": return <TvWidget />;
     case "recap": return <RecapWidget />;
+    case "signals": return <SignalsWidget />;
+    case "risk": return <RiskWidget />;
+    case "journal": return <JournalWidget />;
   }
 }
 
@@ -94,6 +100,7 @@ const TITLES: Record<string, string> = {
   heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
   calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
+  signals: "CL / MCL Signals", risk: "LucidFlex Risk", journal: "Trade Journal",
 };
 
 export default function Workspace() {
@@ -106,15 +113,42 @@ export default function Workspace() {
 
   const symbolAware = new Set(["quote", "chart", "news", "options", "insider"]);
 
+  // Below this width a 12-column grid squeezes every widget unreadably narrow,
+  // so stack them in one column, top-to-bottom in desktop order. The stacked
+  // arrangement is never saved: the desktop layout survives a narrow window.
+  const NARROW_PX = 900;
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const update = () => setNarrow(window.innerWidth < NARROW_PX);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const shownLayout = narrow
+    ? [...layout]
+        .sort((a, b) => a.y - b.y || a.x - b.x)
+        .reduce<{ items: typeof layout; y: number }>(
+          (acc, l) => ({ items: [...acc.items, { ...l, x: 0, y: acc.y, w: 1 }], y: acc.y + l.h }),
+          { items: [], y: 0 }
+        ).items
+    : layout;
+
   return (
     <Grid
+      key={narrow ? "narrow" : "wide"}
       className="layout"
-      layout={layout}
-      cols={12}
+      layout={shownLayout}
+      cols={narrow ? 1 : 12}
+      isDraggable={!narrow}
+      isResizable={!narrow}
       rowHeight={30}
-      margin={[4, 4]}
+      margin={[10, 10]}
+      containerPadding={[12, 12]}
       draggableHandle=".panel-title"
-      onLayoutChange={(l) => setLayout(l.map(({ i, x, y, w, h }) => ({ i, x, y, w, h })))}
+      onLayoutChange={(l) => {
+        if (!narrow) setLayout(l.map(({ i, x, y, w, h }) => ({ i, x, y, w, h })));
+      }}
     >
       {widgets.map((w) => (
         <div key={w.id}>

@@ -1,25 +1,48 @@
 @import "tailwindcss";
 
+/* Theme tokens. Components reference these, never raw hex, so one edit here
+   restyles the whole workspace. --amber is the accent (name kept for the
+   existing widgets that use it). */
 :root {
-  --bg: #000000;
-  --panel: #0a0a0a;
-  --panel-2: #111111;
-  --border: #262626;
-  --amber: #ff9900;
-  --amber-dim: #b36b00;
-  --up: #00c853;
-  --down: #ff3d3d;
-  --text: #d9d9d9;
-  --text-dim: #808080;
+  --bg: #07090d;
+  --panel: #0e1117;
+  --panel-2: #141922;
+  --panel-3: #1a2030;
+  --border: #1f2633;
+  --border-strong: #2c3445;
+  --amber: #f5a524;
+  --amber-dim: #a8741c;
+  --accent-soft: rgba(245, 165, 36, 0.12);
+  --up: #22c55e;
+  --up-soft: rgba(34, 197, 94, 0.12);
+  --down: #f43f5e;
+  --down-soft: rgba(244, 63, 94, 0.12);
+  --text: #e6e9ef;
+  --text-dim: #8b93a7;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font-ui: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains), "SF Mono", Menlo, monospace;
 }
 
 html,
 body {
-  background: var(--bg);
+  background: radial-gradient(1200px 600px at 20% -10%, #111827 0%, var(--bg) 60%) fixed;
   color: var(--text);
-  font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
-  font-size: 12px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+/* Prices line up: every digit the same width. */
+.num,
+table.data-table td {
+  font-variant-numeric: tabular-nums;
+}
+.mono {
+  font-family: var(--font-mono);
 }
 
 ::-webkit-scrollbar {
@@ -27,40 +50,73 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--panel);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--amber-dim);
+  background-clip: padding-box;
 }
+
+/* ---- panels ------------------------------------------------------------ */
 
 .terminal-panel {
   background: var(--panel);
   border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  transition: border-color 150ms ease;
+}
+.terminal-panel:hover {
+  border-color: var(--border-strong);
 }
 
 .panel-title {
-  background: var(--panel-2);
   border-bottom: 1px solid var(--border);
-  color: var(--amber);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  padding: 3px 8px;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 7px 10px;
   font-size: 11px;
   text-transform: uppercase;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  cursor: move;
+  cursor: grab;
   user-select: none;
   flex-shrink: 0;
+  white-space: nowrap;
+  gap: 8px;
 }
+.panel-title > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel-title:active {
+  cursor: grabbing;
+}
+.panel-title > span:first-child::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  margin-right: 8px;
+  vertical-align: middle;
+  box-shadow: 0 0 8px var(--amber);
+}
+
+/* ---- text colours ------------------------------------------------------ */
 
 .up {
   color: var(--up);
@@ -75,18 +131,26 @@ body {
   color: var(--text-dim);
 }
 
+/* ---- tables ------------------------------------------------------------ */
+
 table.data-table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
 }
 table.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
   color: var(--text-dim);
   text-align: right;
-  padding: 2px 6px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border);
-  font-weight: 400;
+  font-weight: 500;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
   font-size: 10px;
   white-space: nowrap;
   cursor: pointer;
@@ -94,60 +158,123 @@ table.data-table th {
 table.data-table th:first-child,
 table.data-table td:first-child {
   text-align: left;
+  padding-left: 10px;
 }
 table.data-table td {
   text-align: right;
-  padding: 2px 6px;
-  border-bottom: 1px solid #161616;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   white-space: nowrap;
 }
+table.data-table tbody tr {
+  transition: background 120ms ease;
+}
 table.data-table tbody tr:hover {
-  background: #1a1a1a;
+  background: var(--panel-3);
   cursor: pointer;
 }
 
 .flash-white {
-  border-radius: 2px;
+  border-radius: 3px;
   animation: flash-white-anim 450ms ease-out;
 }
 @keyframes flash-white-anim {
-  0% { background-color: rgba(255, 255, 255, 0.85); }
+  0% { background-color: rgba(245, 165, 36, 0.45); }
   100% { background-color: transparent; }
 }
+
+/* ---- controls ---------------------------------------------------------- */
 
 input,
 select {
   background: var(--panel-2);
   border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   color: var(--text);
-  padding: 2px 6px;
-  font-size: 11px;
+  padding: 4px 8px;
+  font-size: 12px;
   font-family: inherit;
+  font-variant-numeric: tabular-nums;
   outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+input::placeholder {
+  color: #5b6378;
 }
 input:focus,
 select:focus {
   border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
+input[type="checkbox"] {
+  accent-color: var(--amber);
+  padding: 0;
+}
+
 button.term-btn {
   background: var(--panel-2);
   border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   color: var(--text);
-  padding: 2px 8px;
+  padding: 4px 10px;
   font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   font-family: inherit;
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-button.term-btn:hover,
+button.term-btn:hover {
+  background: var(--panel-3);
+  border-color: var(--border-strong);
+}
 button.term-btn.active {
-  border-color: var(--amber);
+  background: var(--accent-soft);
+  border-color: rgba(245, 165, 36, 0.5);
   color: var(--amber);
 }
+button.term-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Small status pill: <span class="pill up">LONG</span> */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  background: var(--panel-3);
+}
+.pill.up {
+  background: var(--up-soft);
+}
+.pill.down {
+  background: var(--down-soft);
+}
+.pill.amber {
+  background: var(--accent-soft);
+}
+
+/* ---- grid -------------------------------------------------------------- */
 
 .react-grid-item.react-grid-placeholder {
-  background: var(--amber-dim) !important;
-  opacity: 0.2;
+  background: var(--amber) !important;
+  opacity: 0.12;
+  border-radius: var(--radius);
+}
+.react-grid-item > .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.react-grid-item:hover > .react-resizable-handle {
+  opacity: 1;
 }
 .react-grid-item > .react-resizable-handle::after {
-  border-color: var(--amber-dim) !important;
+  border-color: var(--text-dim) !important;
 }

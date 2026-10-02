@@ -29,7 +29,7 @@ const toMap = (pts: Point[]) => new Map(pts.map((p) => [p.time, p.value]));
 
 const INDICATOR_COLOR: Record<string, string> = {
   SMA20: "#ffd966", SMA50: "#4fc3f7", SMA200: "#ba68c8", EMA20: "#ff8a65",
-  VWAP: "#80cbc4", RSI: "#ff9900", BOLL: "#ff9900", MACD: "#4fc3f7",
+  VWAP: "#80cbc4", RSI: "#f5a524", BOLL: "#f5a524", MACD: "#4fc3f7",
 };
 
 export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
@@ -131,11 +131,11 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     if (!el || !candles || candles.length === 0) return;
 
     const chart = createChart(el, {
-      layout: { background: { color: "#0a0a0a" }, textColor: "#808080", fontSize: 10, attributionLogo: false },
-      grid: { vertLines: { color: "#1a1a1a" }, horzLines: { color: "#1a1a1a" } },
+      layout: { background: { color: "#0e1117" }, textColor: "#8b93a7", fontSize: 10, attributionLogo: false },
+      grid: { vertLines: { color: "#141a24" }, horzLines: { color: "#141a24" } },
       crosshair: { mode: 0 },
-      timeScale: { borderColor: "#262626", timeVisible: range === "1D" || range === "5D" },
-      rightPriceScale: { borderColor: "#262626" },
+      timeScale: { borderColor: "#232a37", timeVisible: range === "1D" || range === "5D" },
+      rightPriceScale: { borderColor: "#232a37" },
       autoSize: true,
       // Mouse-wheel is left free for page scrolling — zoom via drag, pinch, or the range buttons instead.
       handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
@@ -143,8 +143,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     });
     chartRef.current = chart;
 
-    const upColor = "#00c853";
-    const downColor = "#ff3d3d";
+    const upColor = "#22c55e";
+    const downColor = "#f43f5e";
 
     if (chartType === "candles") {
       chart
@@ -159,11 +159,11 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
         .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
     } else if (chartType === "line") {
       chart
-        .addSeries(LineSeries, { color: "#ff9900", lineWidth: 1 })
+        .addSeries(LineSeries, { color: "#f5a524", lineWidth: 1 })
         .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     } else {
       chart
-        .addSeries(AreaSeries, { lineColor: "#ff9900", topColor: "rgba(255,153,0,0.25)", bottomColor: "rgba(255,153,0,0)" })
+        .addSeries(AreaSeries, { lineColor: "#f5a524", topColor: "rgba(245,165,36,0.25)", bottomColor: "rgba(245,165,36,0)" })
         .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     }
 
@@ -184,9 +184,9 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     if (indicatorData?.EMA20) overlay(indicatorData.EMA20, INDICATOR_COLOR.EMA20);
     if (indicatorData?.VWAP) overlay(indicatorData.VWAP, INDICATOR_COLOR.VWAP);
     if (indicatorData?.BOLL) {
-      overlay(indicatorData.BOLL.upper, "rgba(255,153,0,0.5)");
-      overlay(indicatorData.BOLL.middle, "rgba(255,153,0,0.8)");
-      overlay(indicatorData.BOLL.lower, "rgba(255,153,0,0.5)");
+      overlay(indicatorData.BOLL.upper, "rgba(245,165,36,0.5)");
+      overlay(indicatorData.BOLL.middle, "rgba(245,165,36,0.8)");
+      overlay(indicatorData.BOLL.lower, "rgba(245,165,36,0.5)");
     }
 
     let paneIdx = 1;
@@ -200,7 +200,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       chart.addSeries(HistogramSeries, { color: "#4fc3f7" }, pane).setData(
         m.histogram.map((p) => ({ time: ts(p.time), value: p.value, color: p.value >= 0 ? "rgba(0,200,83,0.6)" : "rgba(255,61,61,0.6)" }))
       );
-      chart.addSeries(LineSeries, { color: "#ff9900", lineWidth: 1 }, pane).setData(
+      chart.addSeries(LineSeries, { color: "#f5a524", lineWidth: 1 }, pane).setData(
         m.macd.map((p) => ({ time: ts(p.time), value: p.value }))
       );
       chart.addSeries(LineSeries, { color: "#ffffff", lineWidth: 1 }, pane).setData(
