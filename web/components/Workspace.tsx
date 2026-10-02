@@ -23,6 +23,7 @@ import RecapWidget from "./widgets/RecapWidget";
 import SignalsWidget from "./widgets/SignalsWidget";
 import RiskWidget from "./widgets/RiskWidget";
 import JournalWidget from "./widgets/JournalWidget";
+import AccountsWidget from "./widgets/AccountsWidget";
 
 const Grid = WidthProvider(GridLayout);
 
@@ -46,6 +47,7 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "signals": return <SignalsWidget />;
     case "risk": return <RiskWidget />;
     case "journal": return <JournalWidget />;
+    case "accounts": return <AccountsWidget widget={widget} />;
   }
 }
 
@@ -95,12 +97,14 @@ function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSym
   );
 }
 
+const BROKER_TITLES: Record<string, string> = { moomoo: "moomoo", hata: "Hata", lucid: "Lucid" };
+
 const TITLES: Record<string, string> = {
   quote: "Quote", chart: "Chart", watchlist: "Watchlist", news: "News",
   heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
   calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
-  signals: "CL / MCL Signals", risk: "LucidFlex Risk", journal: "Trade Journal",
+  signals: "CL / MCL Signals", risk: "LucidFlex Risk", journal: "Trade Journal", accounts: "Broker Accounts",
 };
 
 export default function Workspace() {
@@ -156,6 +160,7 @@ export default function Workspace() {
             <div className="panel-title">
               <span>
                 {TITLES[w.type]}
+                {w.type === "accounts" && w.broker && <span className="dim ml-1.5">· {BROKER_TITLES[w.broker]}</span>}
                 {symbolAware.has(w.type) && <SymbolTag widget={w} activeSymbol={activeSymbol} />}
               </span>
               <span className="flex gap-2 items-center">

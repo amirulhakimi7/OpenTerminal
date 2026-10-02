@@ -21,14 +21,18 @@ export type WidgetType =
   | "recap"
   | "signals"
   | "risk"
-  | "journal";
+  | "journal"
+  | "accounts";
 
 export type WidgetInstance = {
   id: string;
   type: WidgetType;
   symbol?: string;
   linked: boolean; // follows the globally active symbol
+  broker?: BrokerId; // accounts widget: pin to one broker; absent shows all
 };
+
+export type BrokerId = "moomoo" | "hata" | "lucid";
 
 // What the trader reads off the LucidFlex dashboard; there is no broker link yet.
 // pnlFromJournal: take today's P&L from the trade journal instead of sessionPnl.
@@ -93,6 +97,7 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
   signals: { w: 7, h: 10 },
   risk: { w: 5, h: 12 },
   journal: { w: 7, h: 9 },
+  accounts: { w: 7, h: 10 },
 };
 
 export type PresetName = "futures" | "crypto" | "stocks";
@@ -107,15 +112,18 @@ export const PRESETS: Record<PresetName, Preset> = {
       { id: "p-signals", type: "signals", linked: false },
       { id: "p-risk", type: "risk", linked: false },
       { id: "p-journal", type: "journal", linked: false },
-      { id: "p-news", type: "news", linked: true },
+      { id: "p-accounts", type: "accounts", linked: false, broker: "lucid" },
+      // Pinned to crude: futures quotes aren't on the free feeds, but its news is.
+      { id: "p-news", type: "news", symbol: "CL=F", linked: false },
       { id: "p-calendar", type: "calendar", linked: false },
     ],
     layout: [
       { i: "p-signals", x: 0, y: 0, w: 7, h: 11 },
       { i: "p-risk", x: 7, y: 0, w: 5, h: 14 },
       { i: "p-journal", x: 0, y: 11, w: 7, h: 10 },
-      { i: "p-news", x: 7, y: 14, w: 5, h: 7 },
-      { i: "p-calendar", x: 0, y: 21, w: 12, h: 11 },
+      { i: "p-accounts", x: 7, y: 14, w: 5, h: 7 },
+      { i: "p-calendar", x: 0, y: 21, w: 7, h: 11 },
+      { i: "p-news", x: 7, y: 21, w: 5, h: 11 },
     ],
   },
   crypto: {
@@ -123,14 +131,16 @@ export const PRESETS: Record<PresetName, Preset> = {
     widgets: [
       { id: "p-chart", type: "chart", linked: true },
       { id: "p-crypto", type: "crypto", linked: false },
-      { id: "p-journal", type: "journal", linked: false },
+      { id: "p-accounts", type: "accounts", linked: false, broker: "hata" },
       { id: "p-news", type: "news", linked: false },
+      { id: "p-journal", type: "journal", linked: false },
     ],
     layout: [
       { i: "p-chart", x: 0, y: 0, w: 7, h: 12 },
       { i: "p-crypto", x: 7, y: 0, w: 5, h: 12 },
-      { i: "p-journal", x: 0, y: 12, w: 7, h: 9 },
+      { i: "p-accounts", x: 0, y: 12, w: 7, h: 9 },
       { i: "p-news", x: 7, y: 12, w: 5, h: 9 },
+      { i: "p-journal", x: 0, y: 21, w: 12, h: 9 },
     ],
   },
   stocks: {
@@ -139,17 +149,19 @@ export const PRESETS: Record<PresetName, Preset> = {
       { id: "p-chart", type: "chart", linked: true },
       { id: "p-quote", type: "quote", linked: true },
       { id: "p-watchlist", type: "watchlist", linked: false },
-      { id: "p-heatmap", type: "heatmap", linked: false },
+      { id: "p-accounts", type: "accounts", linked: false, broker: "moomoo" },
       { id: "p-news", type: "news", linked: true },
       { id: "p-journal", type: "journal", linked: false },
+      { id: "p-heatmap", type: "heatmap", linked: false },
     ],
     layout: [
       { i: "p-chart", x: 0, y: 0, w: 7, h: 12 },
       { i: "p-quote", x: 7, y: 0, w: 5, h: 6 },
       { i: "p-watchlist", x: 7, y: 6, w: 5, h: 6 },
-      { i: "p-heatmap", x: 0, y: 12, w: 7, h: 10 },
+      { i: "p-accounts", x: 0, y: 12, w: 7, h: 10 },
       { i: "p-news", x: 7, y: 12, w: 5, h: 10 },
-      { i: "p-journal", x: 0, y: 22, w: 12, h: 9 },
+      { i: "p-journal", x: 0, y: 22, w: 7, h: 9 },
+      { i: "p-heatmap", x: 7, y: 22, w: 5, h: 9 },
     ],
   },
 };

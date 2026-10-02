@@ -12,6 +12,7 @@ const GROUPS: Array<{ title: string; items: Item[] }> = [
       { type: "signals", label: "CL Signals", icon: "◎" },
       { type: "risk", label: "LucidFlex Risk", icon: "⛨" },
       { type: "journal", label: "Trade Journal", icon: "✎" },
+      { type: "accounts", label: "Broker Accounts", icon: "⚿" },
       { type: "portfolio", label: "Portfolio", icon: "◫", key: "⌥8" },
     ],
   },

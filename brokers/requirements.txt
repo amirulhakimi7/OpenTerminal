@@ -1,0 +1,3 @@
+moomoo-api>=10.11
+fastapi
+uvicorn

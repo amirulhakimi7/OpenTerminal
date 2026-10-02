@@ -5,6 +5,7 @@ import { portfolioRouter } from "./routes/portfolio.js";
 import { aiRouter } from "./routes/ai.js";
 import { signalsRouter } from "./routes/signals.js";
 import { journalRouter } from "./routes/journal.js";
+import { brokersRouter } from "./routes/brokers.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
@@ -44,6 +45,8 @@ app.use("/api", rateLimit({ windowMs: 60_000, max: 240 }), marketRouter);
 // Portfolio data and the paid AI endpoint require a shared secret; see auth.ts.
 app.use("/api/portfolios", requireApiKey, portfolioRouter);
 app.use("/api/journal", requireApiKey, journalRouter);
+// Broker balances and positions are private, so they sit behind the key too.
+app.use("/api/brokers", requireApiKey, brokersRouter);
 app.use(
   "/api/ai",
   requireApiKey,
