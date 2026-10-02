@@ -6,7 +6,7 @@ import ast
 from datetime import UTC, datetime
 from pathlib import Path
 
-from moomoo_adapter import account_currency, summarize, to_account, to_position
+from moomoo_adapter import account_currency, account_kind, market_names, summarize, to_account, to_position
 from schema import num
 
 NOW = datetime(2026, 10, 2, 14, 0, tzinfo=UTC)
@@ -33,6 +33,7 @@ def test_account_happy_path() -> None:
     )
     assert acc == {
         "acc_id": "281756460288",
+        "kind": "Account",
         "market": "US",
         "currency": "USD",
         "total_assets": 10500.5,
@@ -92,6 +93,31 @@ def test_summary_sorts_largest_first() -> None:
     assert [p["symbol"] for p in s["positions"]] == ["B", "A"]
 
 
-def test_account_currency_fallback() -> None:
-    assert account_currency(["MY", "US"]) == "MYR"
+def test_account_currency_prefers_usd_for_universal_accounts() -> None:
+    # moomoo lists HK first for a universal account; its US positions report in USD.
+    assert account_currency(["HK", "US", "SG", "MY"]) == "USD"
+    assert account_currency(["MY"]) == "MYR"
     assert account_currency([]) == "USD"
+
+
+def test_market_names_accepts_strings_and_ints() -> None:
+    to_name = {1: "HK", 2: "US"}.get
+    assert market_names(["HK", "US", "MYFUND", "USFUND"], lambda i: "?") == ["HK", "US"]
+    assert market_names([1, 2, 0], lambda i: to_name(i, "N/A")) == ["HK", "US"]
+
+
+def test_account_kind() -> None:
+    assert account_kind({"acc_type": "MARGIN", "acc_role": "NORMAL"}) == "Margin"
+    assert account_kind({"acc_type": "CASH", "acc_role": "IPO"}) == "Cash · IPO"
+
+
+def test_missing_account_pl_is_filled_from_its_positions() -> None:
+    acc = to_account({"acc_id": 7}, {"total_assets": 100, "unrealized_pl": "N/A"}, ["US"])
+    other = to_account({"acc_id": 8}, {"total_assets": 0}, ["MY"])
+    rows = [
+        {"code": "US.A", "qty": 1, "pl_val": 10.5, "_acc_id": "7"},
+        {"code": "US.B", "qty": 2, "pl_val": -4.25, "_acc_id": "7"},
+    ]
+    s = summarize("REAL", [acc, other], rows, NOW)
+    assert s["accounts"][0]["unrealized_pl"] == 6.25
+    assert s["accounts"][1]["unrealized_pl"] is None  # no positions: unknown, not zero

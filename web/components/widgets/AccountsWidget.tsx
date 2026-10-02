@@ -8,6 +8,7 @@ import type { BrokerId, WidgetInstance } from "../../store/terminal";
 // Mirrors BrokerSummary in brokers/schema.py. Every broker returns this shape.
 type Account = {
   acc_id: string;
+  kind: string;
   market: string;
   currency: string;
   total_assets: number | null;
@@ -35,6 +36,11 @@ const BROKERS: Array<{ id: BrokerId; label: string; asset: string; ready: boolea
   { id: "hata", label: "Hata", asset: "Crypto", ready: false, hint: "Waiting for Hata API documentation (support@hata.io)." },
   { id: "lucid", label: "Lucid", asset: "Futures", ready: false, hint: "Connects through your futures platform (Rithmic / Tradovate); not set up yet." },
 ];
+
+// Fractional shares (moomoo sells them) need their decimals: 2.3128, not 2.
+function qty(n: number): string {
+  return Number.isInteger(n) ? fmt(n, 0) : n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+}
 
 function money(n: number | null, ccy: string): string {
   if (n === null) return "—";
@@ -65,7 +71,7 @@ function BrokerView({ broker }: { broker: string }) {
         {data.accounts.map((a) => (
           <div key={`${a.acc_id}-${a.market}`} className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-2.5">
             <div className="flex justify-between dim text-[10px] uppercase tracking-wider">
-              <span>{a.market}</span>
+              <span className="truncate" title={a.market}>{a.kind} · {a.market}</span>
               <span className="num">··{a.acc_id.slice(-4)}</span>
             </div>
             <div className="text-[16px] font-semibold num mt-1">{money(a.total_assets, a.currency)}</div>
@@ -103,7 +109,7 @@ function BrokerView({ broker }: { broker: string }) {
                     <span className="font-semibold">{p.symbol}</span>
                     <span className="dim ml-1.5 text-[10px]">{p.name}</span>
                   </td>
-                  <td>{fmt(p.qty, 0)}</td>
+                  <td>{qty(p.qty)}</td>
                   <td>{fmt(p.cost_price)}</td>
                   <td>{fmt(p.price)}</td>
                   <td>{money(p.market_value, p.currency)}</td>

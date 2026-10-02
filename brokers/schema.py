@@ -11,6 +11,7 @@ from typing import TypedDict
 
 class Account(TypedDict):
     acc_id: str
+    kind: str  # e.g. "Margin", "Cash · IPO"
     market: str
     currency: str
     total_assets: float | None

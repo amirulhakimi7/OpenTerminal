@@ -13,22 +13,39 @@ the only function that talks to OpenD.
 from __future__ import annotations
 
 import socket
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 from schema import Account, BrokerSummary, Position, num, text
 
-# The currency moomoo should report an account's totals in, by its first market.
-_CURRENCY_BY_MARKET = {"US": "USD", "MY": "MYR", "HK": "HKD", "SG": "SGD", "JP": "JPY", "AU": "AUD", "CA": "CAD"}
+# Reporting currency, most-preferred market first: a universal account that
+# can trade HK/US/SG/MY reports in USD, not in whichever market moomoo lists first.
+_CURRENCY_PRIORITY = [("US", "USD"), ("MY", "MYR"), ("HK", "HKD"), ("SG", "SGD"), ("JP", "JPY"), ("AU", "AUD"), ("CA", "CAD")]
 
 
 def account_currency(markets: Sequence[str]) -> str:
     """Reporting currency for an account trading *markets*; USD when unknown."""
-    for m in markets:
-        if m in _CURRENCY_BY_MARKET:
-            return _CURRENCY_BY_MARKET[m]
+    for market, currency in _CURRENCY_PRIORITY:
+        if market in markets:
+            return currency
     return "USD"
+
+
+def market_names(raw: Sequence[object], to_name: Callable[[int], str]) -> list[str]:
+    """
+    ``trdmarket_auth`` as names.  The SDK returns names in current versions and
+    enum ints in older ones; fund sub-markets (MYFUND, USFUND) are dropped as noise.
+    """
+    names = [to_name(m) if isinstance(m, int) else str(m) for m in raw]
+    return [n for n in names if n not in ("N/A", "") and not n.endswith("FUND")]
+
+
+def account_kind(acc: Mapping[str, Any]) -> str:
+    """"Margin", "Cash", or "Cash · IPO" — the role only when it isn't the normal one."""
+    kind = text(acc.get("acc_type"), "Account").title()
+    role = text(acc.get("acc_role"))
+    return f"{kind} · {role}" if role and role != "NORMAL" else kind
 
 
 def to_account(acc: Mapping[str, Any], funds: Mapping[str, Any] | None, markets: Sequence[str]) -> Account:
@@ -47,6 +64,7 @@ def to_account(acc: Mapping[str, Any], funds: Mapping[str, Any] | None, markets:
     f = funds or {}
     return Account(
         acc_id=text(acc.get("acc_id"), "?"),
+        kind=account_kind(acc),
         market="/".join(markets) or "—",
         currency=text(f.get("currency"), account_currency(markets)),
         total_assets=num(f.get("total_assets")),
@@ -88,13 +106,31 @@ def summarize(
     position_rows: Sequence[Mapping[str, Any]],
     now: datetime,
 ) -> BrokerSummary:
-    """Assemble the summary; closed position lines are dropped, largest value first."""
+    """
+    Assemble the summary; closed position lines are dropped, largest value first.
+
+    An account whose funds query left ``unrealized_pl`` empty gets the sum of
+    its open positions' P&L, matched on the ``_acc_id`` tag the fetch adds.
+    """
+    pl_by_acc: dict[str, float] = {}
+    for row in position_rows:
+        p = to_position(row)
+        if p is not None and p["pl"] is not None:
+            key = text(row.get("_acc_id"))
+            pl_by_acc[key] = pl_by_acc.get(key, 0.0) + p["pl"]
+    filled = [
+        Account(**{**a, "unrealized_pl": round(pl_by_acc[a["acc_id"]], 2)})
+        if a["unrealized_pl"] is None and a["acc_id"] in pl_by_acc
+        else a
+        for a in accounts
+    ]
+
     positions = [p for p in (to_position(r) for r in position_rows) if p is not None]
     positions.sort(key=lambda p: abs(p["market_value"] or 0.0), reverse=True)
     return BrokerSummary(
         broker="moomoo",
         env=env,
-        accounts=list(accounts),
+        accounts=filled,
         positions=positions,
         updated_at=now.isoformat(),
     )
@@ -143,7 +179,7 @@ def fetch_summary(host: str, port: int, env: str, security_firm: str) -> BrokerS
         for acc in acc_df.to_dict("records"):
             if acc.get("trd_env") != env or acc.get("acc_status") == "DISABLED":
                 continue
-            markets = [TrdMarket.to_string2(m) for m in acc.get("trdmarket_auth") or []]
+            markets = market_names(acc.get("trdmarket_auth") or [], TrdMarket.to_string2)
             currency = account_currency(markets)
 
             ret, funds_df = ctx.accinfo_query(trd_env=env, acc_id=acc["acc_id"], currency=currency)
@@ -152,7 +188,9 @@ def fetch_summary(host: str, port: int, env: str, security_firm: str) -> BrokerS
 
             ret, pos_df = ctx.position_list_query(trd_env=env, acc_id=acc["acc_id"])
             if ret == RET_OK:
-                position_rows.extend(pos_df.to_dict("records"))
+                for row in pos_df.to_dict("records"):
+                    row["_acc_id"] = str(acc["acc_id"])
+                    position_rows.append(row)
 
         if not accounts:
             raise MoomooError(f"no active {env} accounts on this moomoo login")
