@@ -114,19 +114,33 @@ function paint(rows: string[], colors: Record<string, string>, mirror: boolean):
 
 /** The sprite for a role facing `dir` at walk frame `frame` (0-3). */
 export function personSprite(role: RoleId, dir: Dir, frame: number): HTMLCanvasElement {
+  return sprite(role, look(role), dir, frame);
+}
+
+// Kimi, the Head Trader: a gold suit and a dark tie, so you always spot yourself.
+const KIMI = {
+  colors: { o: "#0d0f14", h: "#141414", s: "#e0ac69", e: "#111111", j: "#b7791f", w: "#fef3c7", t: "#111827", p: "#1b1f29", k: "#08090c" } as Record<string, string>,
+  longHair: false,
+};
+
+export function playerSprite(dir: Dir, frame: number): HTMLCanvasElement {
+  return sprite("kimi", KIMI, dir, frame);
+}
+
+function sprite(id: string, lk: { colors: Record<string, string>; longHair: boolean }, dir: Dir, frame: number): HTMLCanvasElement {
   frame = Number.isFinite(frame) ? ((Math.floor(frame) % 4) + 4) % 4 : 0; // never index the walk cycle out of range
-  const key = `${role}|${dir}|${frame}`;
+  const key = `${id}|${dir}|${frame}`;
   const hit = cache.get(key);
   if (hit) return hit;
   const side = dir === 1 || dir === 2;
   const view = dir === 0 ? "down" : dir === 3 ? "up" : "side";
   const base = (view === "down" ? DOWN : view === "up" ? UP : SIDE).slice();
-  const { colors, longHair } = look(role);
+  const { colors, longHair } = lk;
   if (longHair) for (const [row, line] of Object.entries(LONG[view])) base[Number(row)] = line;
   const legs = (side ? LEGS_SIDE : LEGS_DOWN)[frame];
   base[11] = legs[0];
   base[12] = legs[1];
-  const sprite = paint(base, colors, dir === 1);
-  cache.set(key, sprite);
-  return sprite;
+  const out = paint(base, colors, dir === 1);
+  cache.set(key, out);
+  return out;
 }

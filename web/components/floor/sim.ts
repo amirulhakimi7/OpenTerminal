@@ -52,7 +52,7 @@ export type World = {
   riskAlarm: boolean; // NO NEW RISK
   closed: boolean;
   links: Link[];
-  bell: { kind: "open" | "close"; ttl: number } | null; // opening/closing bell ceremony
+  bell: { kind: "open" | "close" | "kimi"; ttl: number } | null; // ceremony, or Kimi ringing it for fun
   confetti: Particle[];
   panic: number; // seconds of red sell-off flash left
   warRoom: { title: string; at: number } | null;
@@ -279,6 +279,25 @@ export function step(w: World, dt: number, snap: FloorSnapshot) {
         break;
     }
   }
+}
+
+/** Kimi rings the bell by hand: the floor applauds; nothing about the market changes. */
+export function ringBell(w: World) {
+  w.bell = { kind: "kimi", ttl: 3.5 };
+  for (const a of w.agents) if (!a.hidden && w.rng() < 0.8) say(a, "👏", 2.5);
+}
+
+/** Someone the player is talking to stops what they're doing and turns to face them. */
+export function faceVisitor(w: World, role: RoleId, x: number) {
+  const a = w.byRole[role];
+  if (a.hidden) return;
+  if (a.state !== "seated") {
+    a.path = [];
+    a.state = "talking";
+  }
+  a.timer = Math.max(a.timer, 6);
+  if (a.state === "talking") a.dir = x < a.px ? 1 : x > a.px ? 2 : 0;
+  say(a, "…", 1.5);
 }
 
 /** React to a data change. */

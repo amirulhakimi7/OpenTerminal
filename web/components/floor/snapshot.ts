@@ -206,3 +206,50 @@ export function factFor(role: RoleId, s: FloorSnapshot): string | null {
       return b[2] ? `${b[2].label} ${b[2].value}${pct(b[2].changePct)}` : null;
   }
 }
+
+/**
+ * What a role tells you when you walk up and talk to them: two or three
+ * lines, all from the snapshot. Never invents a number; says so when there
+ * is nothing live.
+ */
+export function reportFor(role: RoleId, s: FloorSnapshot, offDuty = false): string[] {
+  if (offDuty) return ["I'm off for the night — the market's closed.", "Market Monitoring has the floor until the open."];
+  const board = s.board.map((b) => `${b.label} ${b.value}${pct(b.changePct)}`);
+  const none = "Nothing live on my screens yet.";
+  switch (role) {
+    case "trade_analyst":
+    case "market_data_analyst":
+      return board.length ? ["Here's the board:", ...board.slice(0, 3)] : [none];
+    case "technical_analyst":
+      return board[0] ? [`Lead market: ${board[0]}.`, s.bigMover ? `Watching ${s.bigMover.symbol}${pct(s.bigMover.changePct)} for a break.` : "No standout move to chart yet."] : [none];
+    case "monitoring_analyst":
+      return s.bigMover ? [`Biggest mover: ${s.bigMover.symbol}${pct(s.bigMover.changePct)}.`, "I'll run it over if it keeps going."] : ["Quiet tape. Nothing's moving hard.", "I'll shout if that changes."];
+    case "news_analyst":
+    case "research_analyst":
+      return s.headline ? ["Latest headline:", clip(s.headline, 70), "Full story's in the News widget."] : ["No fresh headline for this market."];
+    case "broadcast_analyst":
+      return s.headline ? ["On air right now:", clip(s.headline, 70)] : ["Nothing breaking on the networks."];
+    case "economic_research_analyst":
+    case "macro_analyst":
+      return s.econEvent
+        ? [`Next big release: ${s.econEvent.title}.`, `That's ${s.econEvent.when}.`, "We'll convene the war room five minutes before."]
+        : ["No high-impact release on the calendar soon."];
+    case "strategy_analyst":
+    case "quant_analyst":
+    case "quant_researcher":
+      return s.signal ? [`Latest setup: ${s.signal.text}.`, "Sizing is on the LucidFlex Risk panel. Execution is yours."] : ["No setup that passes the rules right now.", "I'll bring it over the moment one does."];
+    case "broker_rm":
+      return [s.brokerNote ?? "No broker connected for this floor.", "Balances show in Broker Accounts."];
+    case "portfolio_manager":
+      return s.pnl ? [`${s.pnl.label}: ${s.pnl.value < 0 ? "-" : "+"}$${price(Math.abs(s.pnl.value))}.`, "Details are in Broker Accounts and the Journal."] : ["No P&L to report for this floor yet."];
+    case "risk_manager":
+      if (s.riskBlocked == null) return ["No risk feed on this floor.", "Risk is tracked for the futures account."];
+      return s.riskBlocked
+        ? ["NO NEW RISK.", `Reason: ${s.riskReason ?? "a limit was hit"}.`, "Stand down until it clears."]
+        : ["Risk is OK — there's room for a trade.", "Budget per trade is on the LucidFlex Risk panel."];
+    case "intelligence_analyst":
+    case "equity_research_analyst":
+    case "institutional_research_analyst":
+      return board.length ? [`Breadth check: ${board.slice(0, 2).join(", ")}.`, "Nothing here is advice — just what the screens say."] : [none];
+  }
+}

@@ -17,11 +17,14 @@ import { play, unlockAudio, type Sfx } from "../../lib/sfx";
 import { FLOOR_ORDER, FLOORS, type FloorId } from "./floors";
 import { drawOverlay, drawWorld, hitTest, WORLD_H, WORLD_W, zoneAt, type View } from "./render";
 import { DEPARTMENTS, ROLE_BY_ID, type RoleId } from "./roster";
-import { applyEvent, createWorld, step, type World } from "./sim";
+import { applyEvent, createWorld, faceVisitor, ringBell, step, type World } from "./sim";
+import { createPlayer, drinkCoffee, nearestInteractable, stepPlayer, walkTo, type Interactable, type Player } from "./player";
+import { personSprite } from "./sprites";
 import {
   cryptoSnapshot,
   equitySnapshot,
   factFor,
+  reportFor,
   futuresSnapshot,
   type BrokerIn,
   type CryptoGlobalIn,
@@ -32,7 +35,7 @@ import {
   type NewsIn,
   type QuoteIn,
 } from "./snapshot";
-import { buildFloor, type ZoneId } from "./tilemap";
+import { buildFloor, TILE, walkable, type ZoneId } from "./tilemap";
 
 const MAP = buildFloor();
 const MAX_ZOOM = 3.5;
@@ -208,6 +211,11 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     building: { t: 0, hover: null, carY: carYFor(floor) } as BuildingState,
     bview: { scale: 1, ox: 0, oy: 0 },
     carTarget: null as null | { floor: FloorId; y: number },
+    players: new Map<FloorId, Player>(),
+    keys: new Set<string>(),
+    target: null as Interactable | null,
+    follow: false, // camera follows Kimi once you start moving
+    dialogOpen: false,
   });
   live.current.mode = mode;
   live.current.sound = sound;
@@ -220,6 +228,12 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
   const [, setTick] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [feedOpen, setFeedOpen] = useState(false);
+  type Dialog = { title: string; subtitle: string; lines: string[]; portrait: string | null; actions: Array<{ label: string; run: () => void }> };
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [typed, setTyped] = useState(0); // characters of the dialog revealed so far
+  const [energy, setEnergy] = useState(80);
+  const [toast, setToast] = useState<string | null>(null);
+  live.current.dialogOpen = dialog !== null;
   const feedId = useRef(0);
 
   /** Recompute the view from the fitted base and the camera, keeping the floor filling its frame. */
@@ -248,9 +262,19 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     setZoom(cam.k);
   };
   const resetCamera = () => {
+    live.current.follow = false;
     Object.assign(live.current.cam, { k: 1, cx: WORLD_W / 2, cy: WORLD_H / 2 });
     applyCamera();
     setZoom(1);
+  };
+
+  const playerFor = (f: FloorId) => {
+    let pl = live.current.players.get(f);
+    if (!pl) {
+      pl = createPlayer(MAP);
+      live.current.players.set(f, pl);
+    }
+    return pl;
   };
 
   const worldFor = (f: FloorId) => {
@@ -465,7 +489,28 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       const { floor: f, snap: s, hovered, zone, selected: sel, view } = live.current;
       const w = worldFor(f);
       step(w, dt, s);
-      drawWorld(wctx, w, f, s, { person: hovered ?? sel, zone });
+
+      // Kimi: keys (unless a dialog is open), else any click-to-move route.
+      const pl = playerFor(f);
+      const k = live.current.keys;
+      const input = live.current.dialogOpen
+        ? { dx: 0, dy: 0, run: false }
+        : {
+            dx: (k.has("ArrowRight") || k.has("d") ? 1 : 0) - (k.has("ArrowLeft") || k.has("a") ? 1 : 0),
+            dy: (k.has("ArrowDown") || k.has("s") ? 1 : 0) - (k.has("ArrowUp") || k.has("w") ? 1 : 0),
+            run: k.has("Shift"),
+          };
+      stepPlayer(pl, MAP, input, dt);
+      live.current.target = nearestInteractable(pl, w);
+      if (pl.moving) live.current.follow = true;
+      if (live.current.follow) {
+        const cam = live.current.cam;
+        if (cam.k < 1.8) cam.k = Math.min(1.8, cam.k + dt * 2);
+        cam.cx += (pl.px - cam.cx) * Math.min(1, dt * 4);
+        cam.cy += (pl.py - cam.cy) * Math.min(1, dt * 4);
+        applyCamera();
+      }
+      drawWorld(wctx, w, f, s, { person: hovered ?? sel, zone }, pl, live.current.target);
 
       ctx.imageSmoothingEnabled = false;
       ctx.fillStyle = "#04060a";
@@ -476,7 +521,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       ctx.rect(b.ox, b.oy, WORLD_W * b.scale, WORLD_H * b.scale);
       ctx.clip();
       ctx.drawImage(worldCanvas, view.ox, view.oy, WORLD_W * view.scale, WORLD_H * view.scale);
-      drawOverlay(ctx, view, w, f, s, hovered, Date.now());
+      drawOverlay(ctx, view, w, f, s, hovered, Date.now(), pl, live.current.target);
       ctx.restore();
     };
 
@@ -502,10 +547,38 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     const onWheel = (e: WheelEvent) => {
       if (live.current.mode !== "floor") return;
       e.preventDefault();
+      live.current.follow = false;
       const r = canvas.getBoundingClientRect();
       zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
+
+    // Keyboard: only while the floor is on screen and you're not typing somewhere.
+    const MOVE_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d", "Shift"]);
+    const typing = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (live.current.mode !== "floor" || !inView || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      if (MOVE_KEYS.has(key)) {
+        live.current.keys.add(key);
+        if (key.startsWith("Arrow")) e.preventDefault(); // don't scroll the page
+      } else if (key === "e" || key === "Enter") {
+        if (live.current.dialogOpen) closeDialog();
+        else if (live.current.target) interact(live.current.target);
+      } else if (key === "Escape") {
+        closeDialog();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      live.current.keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key);
+    };
+    const onBlur = () => live.current.keys.clear();
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
     resize();
     kick();
 
@@ -515,9 +588,89 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       io.disconnect();
       document.removeEventListener("visibilitychange", onVis);
       canvas.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const closeDialog = () => {
+    setDialog(null);
+    setTyped(0);
+  };
+  const openDialog = (d: Dialog) => {
+    setTyped(0);
+    setDialog(d);
+  };
+  const flash = (text: string) => {
+    setToast(text);
+    setTimeout(() => setToast((t) => (t === text ? null : t)), 2200);
+  };
+
+  /** Use whatever Kimi is standing next to. */
+  const interact = (t: Interactable) => {
+    const f = live.current.floor;
+    const w = worldFor(f);
+    const s = live.current.snap;
+    const pl = playerFor(f);
+    const company = FLOORS[f].company;
+    if (t.kind === "person" || t.kind === "desk") {
+      const r = ROLE_BY_ID[t.role];
+      const off = w.byRole[t.role].hidden;
+      if (t.kind === "person") faceVisitor(w, t.role, pl.px);
+      openDialog({
+        title: t.kind === "person" ? r.title : `${r.title}'s screens`,
+        subtitle: `${DEPARTMENTS.find((d) => d.id === r.dept)?.name} · ${company}`,
+        lines: t.kind === "desk" && off ? ["Screens are locked — nobody's at this desk.", ...reportFor(t.role, s).slice(0, 1)] : reportFor(t.role, s, off && t.kind === "person"),
+        portrait: t.role,
+        actions: [{ label: `Open ${r.opens} widget`, run: () => addWidget(r.opens) }],
+      });
+    } else if (t.kind === "bell") {
+      ringBell(w);
+      if (live.current.sound) play("bell");
+      setFeed((all) => ({ ...all, [f]: [{ id: ++feedId.current, at: new Date(), text: "🔔 Kimi rang the bell", color: "#fde047" }, ...all[f]].slice(0, 6) }));
+    } else if (t.kind === "coffee") {
+      drinkCoffee(pl);
+      setEnergy(Math.round(pl.energy));
+      flash("☕ Coffee — energy +45");
+      if (live.current.sound) play("chime");
+    } else if (t.kind === "wall") {
+      const target = f === "equity" ? "chart" : f === "crypto" ? "crypto" : "signals";
+      openDialog({
+        title: "Video wall",
+        subtitle: company,
+        lines: s.board.length ? s.board.map((b) => `${b.label} ${b.value}${b.changePct == null ? "" : ` ${b.changePct >= 0 ? "▲" : "▼"}${Math.abs(b.changePct).toFixed(2)}%`}`) : ["The wall is waiting for data."],
+        portrait: null,
+        actions: [{ label: `Open ${target} widget`, run: () => addWidget(target) }],
+      });
+    }
+  };
+
+  /** Call the team into the conference room now (closes itself after a minute and a half). */
+  const callMeeting = () => {
+    const f = floor;
+    const w = worldFor(f);
+    if (w.warRoom) return;
+    fire(f, [{ kind: "warRoom", text: "Kimi's meeting", at: Date.now() + 60_000 }]);
+    if (live.current.sound) play("gong");
+    setTimeout(() => {
+      if (worldFor(f).warRoom?.title === "Kimi's meeting") fire(f, [{ kind: "warRoomEnd" }]);
+    }, 90_000);
+  };
+
+  // Typewriter: reveal the dialog a few characters at a time.
+  useEffect(() => {
+    if (!dialog) return;
+    const total = dialog.lines.join(" ").length;
+    if (typed >= total) return;
+    const t = setTimeout(() => setTyped((n) => Math.min(total, n + 3)), 16);
+    return () => clearTimeout(t);
+  }, [dialog, typed]);
+
+  // Energy display follows the simulation once a second (the 1 s tick re-renders).
+  const pl = playerFor(floor);
+  if (Math.round(pl.energy) !== energy) setTimeout(() => setEnergy(Math.round(pl.energy)), 0);
 
   const toWorld = (e: React.MouseEvent) => {
     const r = canvasRef.current!.getBoundingClientRect();
@@ -550,6 +703,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       const dy = e.clientY - d.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
       if (d.moved && live.current.cam.k > 1) {
+        live.current.follow = false;
         live.current.cam.cx = d.cx - dx / live.current.view.scale;
         live.current.cam.cy = d.cy - dy / live.current.view.scale;
         applyCamera();
@@ -576,9 +730,26 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     }
     if (live.current.drag?.moved) return;
     const p = toWorld(e);
-    const role = hitTest(worldFor(floor), p.x, p.y);
+    const w = worldFor(floor);
+    const role = hitTest(w, p.x, p.y);
     setSelected(role);
     live.current.selected = role;
+    if (role) return;
+    // Click the floor to walk there; click a desk to peek at its screens.
+    const tx = Math.floor(p.x / TILE);
+    const ty = Math.floor(p.y / TILE);
+    const desk = (Object.entries(MAP.desks) as Array<[keyof typeof MAP.desks, (typeof MAP.desks)[keyof typeof MAP.desks]]>).find(
+      ([, d]) => d.desk.x === tx && d.desk.y === ty
+    );
+    if (desk) {
+      interact({ kind: "desk", role: desk[0], x: tx * TILE + 8, y: ty * TILE + 8 });
+      return;
+    }
+    const pl = playerFor(floor);
+    const goal = walkable(MAP, tx, ty)
+      ? { x: tx, y: ty }
+      : [[0, 1], [0, -1], [1, 0], [-1, 0], [0, 2]].map(([dx, dy]) => ({ x: tx + dx, y: ty + dy })).find((g) => walkable(MAP, g.x, g.y));
+    if (goal && walkTo(pl, MAP, goal)) live.current.follow = true;
   };
 
   const world = worldFor(floor);
@@ -633,6 +804,11 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
             title="Play every floor event once (bell, setup, rally, war room, sell-off, FORCE FLAT), tagged [DEMO]"
           >
             {demoRunning ? "● Demo running" : "▶ Demo"}
+          </button>
+        )}
+        {mode === "floor" && (
+          <button className="term-btn" onClick={callMeeting} title="Call the team into the conference room now">
+            🗓 Call meeting
           </button>
         )}
         <button
@@ -760,6 +936,88 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           </button>
         </div>
       )}
+
+        {/* Kimi's HUD: energy and the controls. */}
+        {mode === "floor" && box.width > 0 && (
+          <div
+            className="absolute pointer-events-none rounded-md border border-white/10 bg-black/60 backdrop-blur-sm px-2 py-1"
+            style={{ left: box.left + 8, top: box.top + box.height * 0.075 }}
+          >
+            <div className="flex items-center gap-2 text-[11px]" style={{ fontFamily: "var(--font-pixel)" }}>
+              <span className="text-amber-300">KIMI</span>
+              <span className="dim">⚡</span>
+              <span className="inline-block w-20 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <span
+                  className="block h-full rounded-full transition-all"
+                  style={{ width: `${energy}%`, background: energy < 20 ? "#f87171" : energy < 50 ? "#fbbf24" : "#4ade80" }}
+                />
+              </span>
+            </div>
+            <div className="dim text-[12px] leading-tight mt-0.5" style={{ fontFamily: "var(--font-vt)" }}>
+              WASD/arrows move · Shift run · E use · click to walk
+            </div>
+          </div>
+        )}
+        {toast && (
+          <div
+            className="absolute pointer-events-none px-3 py-1 rounded-md bg-black/80 border border-amber-400/60 text-amber-200"
+            style={{ left: box.left + box.width / 2, top: box.top + box.height * 0.15, transform: "translateX(-50%)", fontFamily: "var(--font-vt)", fontSize: 18 }}
+          >
+            {toast}
+          </div>
+        )}
+
+        {/* RPG dialog box. */}
+        {mode === "floor" && dialog && (
+          <div
+            className="absolute rounded-lg border-2 border-amber-400/70 bg-[#05070c]/95 shadow-2xl p-3 flex gap-3"
+            style={{
+              left: box.left + box.width * 0.12,
+              width: box.width * 0.76,
+              bottom: Math.max(8, (hostRef.current?.clientHeight ?? 0) - (box.top + box.height) + 8),
+              imageRendering: "pixelated",
+            }}
+          >
+            {dialog.portrait && (
+              <canvas
+                width={10}
+                height={11}
+                className="shrink-0 rounded border border-white/15 bg-[#1a2030]"
+                style={{ width: 60, height: 66, imageRendering: "pixelated" }}
+                ref={(c) => {
+                  if (!c) return;
+                  const g = c.getContext("2d")!;
+                  g.clearRect(0, 0, 10, 11);
+                  g.drawImage(personSprite(dialog.portrait as never, 0, 0), 0, 0, 10, 11, 0, 0, 10, 11);
+                }}
+              />
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline gap-2">
+                <span className="text-amber-300 text-[12px]" style={{ fontFamily: "var(--font-pixel)" }}>{dialog.title}</span>
+                <span className="dim text-[11px] truncate">{dialog.subtitle}</span>
+              </div>
+              <div className="mt-1 text-[18px] leading-snug text-slate-100" style={{ fontFamily: "var(--font-vt)" }}>
+                {(() => {
+                  let left = typed;
+                  return dialog.lines.map((line, i) => {
+                    const shown = line.slice(0, Math.max(0, left));
+                    left -= line.length + 1;
+                    return <div key={i}>{shown}{left < 0 && left > -line.length - 1 ? <span className="animate-pulse">▌</span> : null}</div>;
+                  });
+                })()}
+              </div>
+              <div className="flex gap-2 mt-2">
+                {dialog.actions.map((a) => (
+                  <button key={a.label} className="term-btn active" onClick={() => { a.run(); closeDialog(); }}>
+                    {a.label}
+                  </button>
+                ))}
+                <button className="term-btn" onClick={closeDialog}>Close (E / Esc)</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Elevator doors: slide shut, change the view behind them, slide open. */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">

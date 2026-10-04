@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { diffSnapshots, warRoomEvents } from "./events";
 import { findPath } from "./pathfind";
+import { createPlayer, drinkCoffee, fixtures, nearestInteractable, stepPlayer, walkTo } from "./player";
 import { ROLES } from "./roster";
 import { applyEvent, createWorld, step } from "./sim";
-import { cryptoSnapshot, equitySnapshot, factFor, futuresSnapshot, nextEconEvent, type FloorSnapshot } from "./snapshot";
+import { cryptoSnapshot, equitySnapshot, factFor, futuresSnapshot, nextEconEvent, reportFor, type FloorSnapshot } from "./snapshot";
 import { buildFloor, walkable } from "./tilemap";
 
 const MAP = buildFloor();
@@ -282,5 +283,74 @@ describe("snapshots", () => {
       NOW
     );
     expect(e?.title).toBe("USD CPI");
+  });
+});
+
+
+describe("player", () => {
+  const still = { dx: 0, dy: 0, run: false };
+
+  it("spawns on a walkable tile inside the floor", () => {
+    const p = createPlayer(MAP);
+    expect(walkable(MAP, Math.floor(p.px / 16), Math.floor(p.py / 16))).toBe(true);
+  });
+
+  it("walks with the keys and never goes through the outer wall", () => {
+    const p = createPlayer(MAP);
+    const start = p.py;
+    for (let i = 0; i < 20; i++) stepPlayer(p, MAP, { dx: 0, dy: -1, run: false }, 0.05);
+    expect(p.py).toBeLessThan(start);
+    for (let i = 0; i < 400; i++) stepPlayer(p, MAP, { dx: 1, dy: 0, run: true }, 0.05);
+    expect(Math.floor(p.px / 16)).toBeLessThan(MAP.w - 1); // stopped by a wall, not outside
+    expect(walkable(MAP, Math.floor(p.px / 16), Math.floor(p.py / 16))).toBe(true);
+  });
+
+  it("follows a click-to-move route to the bell", () => {
+    const p = createPlayer(MAP);
+    expect(walkTo(p, MAP, { x: 20, y: 3 })).toBe(true);
+    for (let i = 0; i < 600 && p.path.length; i++) stepPlayer(p, MAP, still, 0.05);
+    const f = fixtures(MAP);
+    expect(Math.hypot(p.px - f.bell.x, p.py - f.bell.y)).toBeLessThan(22);
+  });
+
+  it("refuses a route into a wall", () => {
+    expect(walkTo(createPlayer(MAP), MAP, { x: 0, y: 0 })).toBe(false);
+  });
+
+  it("prefers talking to a person over the desk beside them", () => {
+    const w = createWorld(MAP, 3);
+    const p = createPlayer(MAP);
+    const seat = MAP.desks.risk_manager.seat;
+    p.px = seat.x * 16 + 8 + 10;
+    p.py = seat.y * 16 + 8;
+    expect(nearestInteractable(p, w)).toMatchObject({ kind: "person", role: "risk_manager" });
+    w.byRole.risk_manager.hidden = true; // gone home: now it's just their desk
+    expect(nearestInteractable(p, w)?.kind).toBe("desk");
+  });
+
+  it("running tires you and coffee fixes it", () => {
+    const p = createPlayer(MAP);
+    p.energy = 20;
+    for (let i = 0; i < 40; i++) stepPlayer(p, MAP, { dx: 0, dy: -1, run: true }, 0.05);
+    expect(p.energy).toBeLessThan(20);
+    drinkCoffee(p);
+    expect(p.energy).toBeGreaterThan(50);
+  });
+});
+
+describe("reportFor", () => {
+  it("never invents numbers when there's no data", () => {
+    const lines = reportFor("trade_analyst", base());
+    expect(lines.join(" ")).not.toMatch(/\d/);
+  });
+  it("reports a risk block in plain words", () => {
+    expect(reportFor("risk_manager", base({ riskBlocked: true, riskReason: "daily stop" }))).toEqual([
+      "NO NEW RISK.",
+      "Reason: daily stop.",
+      "Stand down until it clears.",
+    ]);
+  });
+  it("says when someone is off duty", () => {
+    expect(reportFor("news_analyst", base(), true)[0]).toContain("off for the night");
   });
 });

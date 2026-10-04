@@ -6,7 +6,8 @@
 
 import { FLOORS, type FloorId } from "./floors";
 import { DEPARTMENTS, ROLE_BY_ID, type RoleId } from "./roster";
-import { personSprite, SPRITE_H, SPRITE_W } from "./sprites";
+import { personSprite, playerSprite, SPRITE_H, SPRITE_W } from "./sprites";
+import type { Interactable, Player } from "./player";
 import type { FloorSnapshot } from "./snapshot";
 import { MAP_H, MAP_W, T, TILE, tileAt, type FloorMap, type ZoneId } from "./tilemap";
 import type { Agent, World } from "./sim";
@@ -218,7 +219,7 @@ function glow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, rg
 export type Highlight = { person: RoleId | null; zone: ZoneId | null };
 
 /** Pass 1: the pixel world. */
-export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorId, snap: FloorSnapshot, hl: Highlight) {
+export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorId, snap: FloorSnapshot, hl: Highlight, player: Player | null = null, target: Interactable | null = null) {
   const theme = FLOORS[floor];
   // Lights follow the floor's own state (set by open/close events), so the
   // opening bell visibly switches them on.
@@ -325,18 +326,50 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
     ctx.strokeRect(r.x * TILE + 0.5, r.y * TILE + 0.5, r.w * TILE - 1, r.h * TILE - 1);
   }
 
-  // People, back to front, with a ring under the highlighted one.
-  const visible = w.agents.filter((a) => !a.hidden).sort((a, b) => a.py - b.py);
-  for (const a of visible) {
-    if (hl.person === a.role) {
-      ctx.strokeStyle = theme.accent;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.ellipse(a.px, a.py + 2, 7, 3, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    drawPerson(ctx, a);
+  // What the player can use right now gets a pulsing marker.
+  if (target && target.kind !== "person") {
+    ctx.strokeStyle = `rgba(253,224,71,${0.6 + 0.4 * Math.sin(t * 6)})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(target.x) - 8.5, Math.round(target.y) - 8.5, 17, 17);
   }
+
+  // People (and Kimi), back to front, with a ring under the highlighted one.
+  type Drawable = { y: number; draw: () => void };
+  const list: Drawable[] = w.agents
+    .filter((a) => !a.hidden)
+    .map((a) => ({
+      y: a.py,
+      draw: () => {
+        const ring = hl.person === a.role || (target?.kind === "person" && target.role === a.role);
+        if (ring) {
+          ctx.strokeStyle = target?.kind === "person" && target.role === a.role ? "#fde047" : theme.accent;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(a.px, a.py + 2, 7, 3, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        drawPerson(ctx, a);
+      },
+    }));
+  if (player) {
+    list.push({
+      y: player.py,
+      draw: () => {
+        ctx.strokeStyle = "#f5a524";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(player.px, player.py + 2, 7, 3, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        const sprite = playerSprite(player.dir, player.moving ? Math.floor(player.walkT * 8) : 0);
+        const x = Math.round(player.px - SPRITE_W / 2);
+        const y = Math.round(player.py - SPRITE_H + 3);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(x + 2, Math.round(player.py) + 1, 6, 2);
+        ctx.drawImage(sprite, x, y);
+      },
+    });
+  }
+  list.sort((a, b) => a.y - b.y).forEach((d) => d.draw());
 
   // The bell, swinging in front of the video wall during a ceremony.
   if (w.bell) {
@@ -429,7 +462,7 @@ export function tickerItems(snap: FloorSnapshot): TickerItem[] {
   return out;
 }
 
-export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, floor: FloorId, snap: FloorSnapshot, hovered: RoleId | null, nowMs: number) {
+export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, floor: FloorId, snap: FloorSnapshot, hovered: RoleId | null, nowMs: number, player: Player | null = null, target: Interactable | null = null) {
   const theme = FLOORS[floor];
   const s = v.scale;
   const { pixel, vt } = v.fonts;
@@ -582,11 +615,39 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, fl
     else if (hovered === a.role) bubble(ctx, bubbleF, head.x, head.y, ROLE_BY_ID[a.role].title, false, vt, true, bounds);
   }
 
+  // Kimi's name tag, and the key prompt over whatever can be used.
+  if (player) {
+    const head = toScreen(v, player.px, player.py - SPRITE_H - 1);
+    const f = fs(5, 10, 13);
+    ctx.font = `${f}px ${pixel}`;
+    ctx.textAlign = "center";
+    const tw = ctx.measureText("KIMI").width + 8;
+    ctx.fillStyle = "rgba(180,83,9,0.92)";
+    ctx.fillRect(head.x - tw / 2, head.y - f - 4, tw, f + 4);
+    ctx.fillStyle = "#fef3c7";
+    ctx.fillText("KIMI", head.x, head.y - f / 2 - 2);
+    if (target) {
+      const label = { person: "Talk", desk: "Peek at screen", bell: "Ring the bell", coffee: "Grab a coffee", wall: "Open the video wall" }[target.kind];
+      const at = toScreen(v, target.x, target.y - (target.kind === "person" ? SPRITE_H + 12 : 14));
+      const pf = fs(7, 13, 18);
+      ctx.font = `${pf}px ${vt}`;
+      const text = `E · ${label}`;
+      const pw = ctx.measureText(text).width + pf;
+      ctx.fillStyle = "rgba(3,6,12,0.9)";
+      ctx.fillRect(at.x - pw / 2, at.y - pf * 0.7, pw, pf * 1.4);
+      ctx.strokeStyle = "#fde047";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(at.x - pw / 2 + 0.5, at.y - pf * 0.7 + 0.5, pw - 1, pf * 1.4 - 1);
+      ctx.fillStyle = "#fde047";
+      ctx.fillText(text, at.x, at.y + 1);
+    }
+  }
+
   // Opening / closing bell banner.
   if (w.bell) {
-    const life = w.bell.kind === "open" ? 6 : 5;
+    const life = w.bell.kind === "open" ? 6 : w.bell.kind === "close" ? 5 : 3.5;
     const alpha = Math.min(1, w.bell.ttl / 0.6, (life - w.bell.ttl) / 0.3);
-    const text = w.bell.kind === "open" ? "OPENING BELL" : "CLOSING BELL";
+    const text = w.bell.kind === "open" ? "OPENING BELL" : w.bell.kind === "close" ? "CLOSING BELL" : "DING DING DING!";
     const f = fs(16, 18, 40);
     const c = toScreen(v, WORLD_W / 2, WORLD_H * 0.32);
     ctx.save();
