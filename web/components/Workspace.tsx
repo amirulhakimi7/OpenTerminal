@@ -24,6 +24,7 @@ import SignalsWidget from "./widgets/SignalsWidget";
 import RiskWidget from "./widgets/RiskWidget";
 import JournalWidget from "./widgets/JournalWidget";
 import AccountsWidget from "./widgets/AccountsWidget";
+import FloorWidget from "./floor/FloorWidget";
 
 const Grid = WidthProvider(GridLayout);
 
@@ -48,6 +49,7 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "risk": return <RiskWidget />;
     case "journal": return <JournalWidget />;
     case "accounts": return <AccountsWidget widget={widget} />;
+    case "floor": return <FloorWidget widget={widget} />;
   }
 }
 
@@ -104,7 +106,7 @@ const TITLES: Record<string, string> = {
   heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
   calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
-  signals: "CL / MCL Signals", risk: "LucidFlex Risk", journal: "Trade Journal", accounts: "Broker Accounts",
+  signals: "CL / MCL Signals", risk: "LucidFlex Risk", journal: "Trade Journal", accounts: "Broker Accounts", floor: "Trading Floor",
 };
 
 export default function Workspace() {

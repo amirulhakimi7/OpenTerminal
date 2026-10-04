@@ -26,6 +26,7 @@ const GROUPS: Array<{ title: string; items: Item[] }> = [
       { type: "heatmap", label: "Heatmap", icon: "▦", key: "⌥5" },
       { type: "options", label: "Options", icon: "⊞", key: "⌥7" },
       { type: "crypto", label: "Crypto", icon: "₿", key: "⌥6" },
+      { type: "floor", label: "Trading Floor", icon: "▣" },
     ],
   },
   {
@@ -46,6 +47,7 @@ const PRESETS: Array<{ name: PresetName; label: string; icon: string }> = [
   { name: "futures", label: "Futures", icon: "🛢" },
   { name: "crypto", label: "Crypto", icon: "₿" },
   { name: "stocks", label: "Stocks", icon: "📈" },
+  { name: "floor", label: "Floor", icon: "🏢" },
 ];
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -60,7 +62,7 @@ export default function Sidebar() {
   return (
     <nav className="w-48 bg-[var(--panel)] border-r border-[var(--border)] flex flex-col shrink-0 overflow-y-auto">
       <SectionTitle>Workspace</SectionTitle>
-      <div className="grid grid-cols-3 gap-1 px-2">
+      <div className="grid grid-cols-2 gap-1 px-2">
         {PRESETS.map((p) => (
           <button
             key={p.name}

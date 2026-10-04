@@ -1,43 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { apiGet, fmt } from "../../lib/api";
+import { fmt } from "../../lib/api";
 import { notifyOnce } from "../../lib/notify";
 import { useRisk } from "../../lib/risk";
-
-// Mirrors SignalView in Trading/src/api/signals.py.
-type Evidence = { kind: string; direction: string; ts_utc: string };
-type Signal = {
-  symbol: string;
-  direction: "long" | "short";
-  ts_utc: string;
-  ts_et: string;
-  entry: number;
-  entry_low: number;
-  entry_high: number;
-  stop: number;
-  target: number;
-  risk_reward: number;
-  risk_ticks: number;
-  reward_ticks: number;
-  risk_usd_per_lot: number;
-  reward_usd_per_lot: number;
-  bias: string;
-  minutes_needed: number;
-  minutes_left: number | null;
-  late: boolean;
-  evidence: Evidence[];
-};
-type SignalsResponse = {
-  symbol: string;
-  live: boolean;
-  source: string;
-  split: string;
-  last_bar: string | null;
-  total: number;
-  signals: Signal[];
-};
+import { useSignals } from "../../lib/signals";
 
 // Display only. Execution stays manual, in NinjaTrader.
 export default function SignalsWidget() {
@@ -46,12 +13,7 @@ export default function SignalsWidget() {
   const [hideLate, setHideLate] = useState(true);
   const { data: risk } = useRisk();
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["signals"],
-    queryFn: () => apiGet<SignalsResponse>("/api/signals?limit=30"),
-    refetchInterval: 60_000,
-    retry: 1,
-  });
+  const { data, isLoading, error } = useSignals();
 
   // Desktop alert for each setup newer than the first batch seen. The first
   // load only sets the baseline, so opening the page never floods alerts.

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { enableNotifications, notificationsEnabled, notificationsSupported } from "../lib/notify";
 import { fmtCountdown, useCmeSession, type CmePhase } from "../lib/session";
+import { marketStateNY } from "../lib/markets";
 import { useTerminal } from "../store/terminal";
 
 type Status = {
@@ -29,14 +30,6 @@ function Clock({ tz, label }: { tz: string; label: string }) {
       </span>
     </span>
   );
-}
-
-function marketStateNY(): { label: string; open: boolean } {
-  const ny = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const day = ny.getDay();
-  const mins = ny.getHours() * 60 + ny.getMinutes();
-  const open = day >= 1 && day <= 5 && mins >= 570 && mins < 960; // 09:30–16:00
-  return { label: open ? "NYSE OPEN" : "NYSE CLOSED", open };
 }
 
 const PHASE_LABEL: Record<CmePhase, { text: string; cls: string }> = {

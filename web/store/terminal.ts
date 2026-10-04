@@ -22,7 +22,8 @@ export type WidgetType =
   | "signals"
   | "risk"
   | "journal"
-  | "accounts";
+  | "accounts"
+  | "floor";
 
 export type WidgetInstance = {
   id: string;
@@ -30,7 +31,10 @@ export type WidgetInstance = {
   symbol?: string;
   linked: boolean; // follows the globally active symbol
   broker?: BrokerId; // accounts widget: pin to one broker; absent shows all
+  floor?: FloorId; // trading floor widget: pin to one floor; absent shows tabs
 };
+
+export type FloorId = "equity" | "crypto" | "futures";
 
 export type BrokerId = "moomoo" | "hata" | "lucid";
 
@@ -48,6 +52,8 @@ type TerminalState = {
   watchlist: string[];
   commandOpen: boolean;
   account: AccountInput;
+  lastFloor: FloorId;
+  setLastFloor: (f: FloorId) => void;
   setAccount: (a: Partial<AccountInput>) => void;
   setActiveSymbol: (s: string) => void;
   setCommandOpen: (open: boolean) => void;
@@ -98,15 +104,20 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
   risk: { w: 5, h: 12 },
   journal: { w: 7, h: 9 },
   accounts: { w: 7, h: 10 },
+  floor: { w: 12, h: 18 },
 };
 
-export type PresetName = "futures" | "crypto" | "stocks";
+export type PresetName = "futures" | "crypto" | "stocks" | "floor";
 
 type Preset = { widgets: WidgetInstance[]; layout: LayoutItem[]; activeSymbol?: string };
 
 // One-click workspaces, one per market the trader works. Widget ids are fixed
 // so applying a preset twice gives the same layout rather than duplicates.
 export const PRESETS: Record<PresetName, Preset> = {
+  floor: {
+    widgets: [{ id: "p-floor", type: "floor", linked: false }],
+    layout: [{ i: "p-floor", x: 0, y: 0, w: 12, h: 22 }],
+  },
   futures: {
     widgets: [
       { id: "p-signals", type: "signals", linked: false },
@@ -175,6 +186,8 @@ export const useTerminal = create<TerminalState>()(
       watchlist: ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"],
       commandOpen: false,
       account: { balance: 50000, peakClose: 50000, sessionPnl: 0 },
+      lastFloor: "futures",
+      setLastFloor: (f) => set({ lastFloor: f }),
       setAccount: (a) => set((st) => ({ account: { ...st.account, ...a } })),
       setActiveSymbol: (s) => set({ activeSymbol: s.toUpperCase() }),
       setCommandOpen: (open) => set({ commandOpen: open }),
