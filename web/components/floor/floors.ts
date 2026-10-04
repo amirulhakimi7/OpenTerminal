@@ -21,7 +21,7 @@ export const FLOORS: Record<FloorId, FloorTheme> = {
   equity: {
     id: "equity",
     label: "Equity",
-    company: "Merdeka Equity Partners",
+    company: "Kimi Equity Partners",
     tagline: "US & regional equities",
     accent: "#38bdf8",
     floor: ["#3a3530", "#35302b"],
@@ -32,7 +32,7 @@ export const FLOORS: Record<FloorId, FloorTheme> = {
   crypto: {
     id: "crypto",
     label: "Crypto",
-    company: "Nusantara Digital Assets",
+    company: "Kimi Digital Assets",
     tagline: "Spot digital assets, 24/7",
     accent: "#a78bfa",
     floor: ["#2b2a3a", "#272635"],
@@ -43,7 +43,7 @@ export const FLOORS: Record<FloorId, FloorTheme> = {
   futures: {
     id: "futures",
     label: "Futures",
-    company: "Selat Commodities Desk",
+    company: "Kimi Commodities Desk",
     tagline: "CME energy futures",
     accent: "#f5a524",
     floor: ["#33302a", "#2e2b25"],
