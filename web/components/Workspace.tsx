@@ -140,6 +140,66 @@ export default function Workspace() {
         ).items
     : layout;
 
+  const panel = (w: (typeof widgets)[number], extra?: React.ReactNode) => (
+    <div className="terminal-panel">
+      <div className="panel-title">
+        <span>
+          {TITLES[w.type]}
+          {w.type === "accounts" && w.broker && <span className="dim ml-1.5">· {BROKER_TITLES[w.broker]}</span>}
+          {symbolAware.has(w.type) && <SymbolTag widget={w} activeSymbol={activeSymbol} />}
+        </span>
+        <span className="flex gap-2 items-center">
+          {extra}
+          {symbolAware.has(w.type) && (
+            <button
+              title={w.linked ? "Linked to active symbol (click to unlink)" : "Unlinked (click to link)"}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => toggleLinked(w.id)}
+              className={w.linked ? "text-[var(--amber)]" : "dim"}
+            >
+              ⛓
+            </button>
+          )}
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => removeWidget(w.id)}
+            className="dim hover:text-[var(--down)]"
+          >
+            ✕
+          </button>
+        </span>
+      </div>
+      <div className="flex-1 overflow-auto min-h-0">
+        <WidgetBody widget={w} />
+      </div>
+    </div>
+  );
+
+  // The trading floor on its own (the Floor preset) fills exactly the visible
+  // workspace, so the whole building — street and cars included — fits on screen.
+  const solo = widgets.length === 1 && widgets[0].type === "floor" ? widgets[0] : null;
+  const soloRef = useRef<HTMLDivElement>(null);
+  if (solo) {
+    return (
+      <div ref={soloRef} className="h-full p-3 bg-[var(--bg)]">
+        {panel(
+          solo,
+          <button
+            title="Full screen (Esc to leave)"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              if (document.fullscreenElement) void document.exitFullscreen();
+              else void soloRef.current?.requestFullscreen();
+            }}
+            className="dim hover:text-[var(--amber)]"
+          >
+            ⛶
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <Grid
       key={narrow ? "narrow" : "wide"}
@@ -158,37 +218,7 @@ export default function Workspace() {
     >
       {widgets.map((w) => (
         <div key={w.id}>
-          <div className="terminal-panel">
-            <div className="panel-title">
-              <span>
-                {TITLES[w.type]}
-                {w.type === "accounts" && w.broker && <span className="dim ml-1.5">· {BROKER_TITLES[w.broker]}</span>}
-                {symbolAware.has(w.type) && <SymbolTag widget={w} activeSymbol={activeSymbol} />}
-              </span>
-              <span className="flex gap-2 items-center">
-                {symbolAware.has(w.type) && (
-                  <button
-                    title={w.linked ? "Linked to active symbol (click to unlink)" : "Unlinked (click to link)"}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={() => toggleLinked(w.id)}
-                    className={w.linked ? "text-[var(--amber)]" : "dim"}
-                  >
-                    ⛓
-                  </button>
-                )}
-                <button
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => removeWidget(w.id)}
-                  className="dim hover:text-[var(--down)]"
-                >
-                  ✕
-                </button>
-              </span>
-            </div>
-            <div className="flex-1 overflow-auto min-h-0">
-              <WidgetBody widget={w} />
-            </div>
-          </div>
+          {panel(w)}
         </div>
       ))}
     </Grid>

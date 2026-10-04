@@ -214,7 +214,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     players: new Map<FloorId, Player>(),
     keys: new Set<string>(),
     target: null as Interactable | null,
-    follow: false, // camera follows Kimi once you start moving
+    follow: false, // when zoomed in, the camera pans to keep Kimi in view
     dialogOpen: false,
   });
   live.current.mode = mode;
@@ -503,9 +503,9 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       stepPlayer(pl, MAP, input, dt);
       live.current.target = nearestInteractable(pl, w);
       if (pl.moving) live.current.follow = true;
-      if (live.current.follow) {
+      // Follow Kimi by panning only; the zoom stays wherever you left it.
+      if (live.current.follow && live.current.cam.k > 1) {
         const cam = live.current.cam;
-        if (cam.k < 1.8) cam.k = Math.min(1.8, cam.k + dt * 2);
         cam.cx += (pl.px - cam.cx) * Math.min(1, dt * 4);
         cam.cy += (pl.py - cam.cy) * Math.min(1, dt * 4);
         applyCamera();
