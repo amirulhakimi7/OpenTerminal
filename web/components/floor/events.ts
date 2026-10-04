@@ -9,7 +9,11 @@ import type { FloorSnapshot } from "./snapshot";
 
 export type FloorEvent =
   | { kind: "marketOpen" }
-  | { kind: "marketClosed" }
+  | { kind: "marketClosed"; bell: boolean } // bell: a close we saw happen, not one we loaded into
+  | { kind: "rally"; text: string }
+  | { kind: "selloff"; text: string }
+  | { kind: "warRoom"; text: string; at: number }
+  | { kind: "warRoomEnd" }
   | { kind: "forceFlat" }
   | { kind: "forceFlatEnd" }
   | { kind: "riskBlocked"; text: string }
@@ -19,6 +23,32 @@ export type FloorEvent =
   | { kind: "bigMover"; text: string }
   | { kind: "econ"; text: string };
 
+/** Day change on the lead market that makes the floor cheer (or panic). */
+export const RALLY = 2;
+/** Minutes before a high-impact release that the war room convenes, and stays after. */
+export const WAR_ROOM_BEFORE_MIN = 5;
+export const WAR_ROOM_AFTER_MIN = 2;
+
+/**
+ * Clock-driven war room: convene before the next high-impact release, break
+ * up shortly after it. Separate from diffSnapshots because it moves with time,
+ * not with data.
+ */
+export function warRoomEvents(
+  active: { title: string; at: number } | null,
+  next: FloorSnapshot["econEvent"],
+  nowMs: number
+): FloorEvent[] {
+  if (active) {
+    return nowMs - active.at > WAR_ROOM_AFTER_MIN * 60_000 ? [{ kind: "warRoomEnd" }] : [];
+  }
+  if (!next) return [];
+  const until = next.at - nowMs;
+  return until <= WAR_ROOM_BEFORE_MIN * 60_000 && until > -WAR_ROOM_AFTER_MIN * 60_000
+    ? [{ kind: "warRoom", text: next.title, at: next.at }]
+    : [];
+}
+
 export function diffSnapshots(prev: FloorSnapshot | null, next: FloorSnapshot): FloorEvent[] {
   const out: FloorEvent[] = [];
 
@@ -27,7 +57,7 @@ export function diffSnapshots(prev: FloorSnapshot | null, next: FloorSnapshot): 
     if (next.open) {
       if (prev?.open === false) out.push({ kind: "marketOpen" });
     } else {
-      out.push({ kind: "marketClosed" });
+      out.push({ kind: "marketClosed", bell: prev?.open === true });
     }
   }
 
@@ -45,6 +75,14 @@ export function diffSnapshots(prev: FloorSnapshot | null, next: FloorSnapshot): 
 
   // Novelties: need a previous value to compare with.
   if (prev) {
+    // The lead market crossing ±2% on the day: the floor reacts once per crossing.
+    const lead = next.board[0];
+    const before = prev.board[0]?.changePct;
+    const now = lead?.changePct;
+    if (lead && before != null && now != null) {
+      if (before < RALLY && now >= RALLY) out.push({ kind: "rally", text: `${lead.label} +${now.toFixed(2)}%` });
+      if (before > -RALLY && now <= -RALLY) out.push({ kind: "selloff", text: `${lead.label} ${now.toFixed(2)}%` });
+    }
     if (next.signal && prev.signal && next.signal.id !== prev.signal.id) out.push({ kind: "signal", text: next.signal.text });
     if (next.headline && prev.headline && next.headline !== prev.headline) out.push({ kind: "headline", text: next.headline });
     if (next.bigMover && prev.bigMover && next.bigMover.symbol !== prev.bigMover.symbol) {

@@ -11,7 +11,9 @@ import { useRisk, useSessionPnl } from "../../lib/risk";
 import { useCmeSessionQuery } from "../../lib/session";
 import { useSignals } from "../../lib/signals";
 import { useTerminal, type WidgetInstance } from "../../store/terminal";
-import { diffSnapshots, type FloorEvent } from "./events";
+import { diffSnapshots, warRoomEvents, type FloorEvent } from "./events";
+import { B_H, B_W, carYFor, FLOOR_BAND, drawBuilding, drawBuildingOverlay, floorAtPoint, type BuildingState, type FloorStatus } from "./building";
+import { play, unlockAudio, type Sfx } from "../../lib/sfx";
 import { FLOOR_ORDER, FLOORS, type FloorId } from "./floors";
 import { drawOverlay, drawWorld, hitTest, WORLD_H, WORLD_W, zoneAt, type View } from "./render";
 import { DEPARTMENTS, ROLE_BY_ID, type RoleId } from "./roster";
@@ -142,7 +144,27 @@ const EVENT_TEXT: Record<FloorEvent["kind"], { label: string; color: string }> =
   headline: { label: "News → Trade Analyst", color: "#facc15" },
   bigMover: { label: "Monitoring → Trade Analyst", color: "#22d3ee" },
   econ: { label: "Macro → Economic Research", color: "#fbbf24" },
+  rally: { label: "🎉 Rally on the floor", color: "#4ade80" },
+  selloff: { label: "😱 Sell-off", color: "#f87171" },
+  warRoom: { label: "War room convened", color: "#fbbf24" },
+  warRoomEnd: { label: "War room dismissed", color: "#94a3b8" },
 };
+
+const SFX_FOR: Partial<Record<FloorEvent["kind"], Sfx>> = {
+  marketOpen: "bell",
+  forceFlat: "siren",
+  rally: "cheer",
+  selloff: "drop",
+  warRoom: "gong",
+  signal: "chime",
+  headline: "chime",
+  riskBlocked: "drop",
+};
+
+function sfxFor(ev: FloorEvent): Sfx | null {
+  if (ev.kind === "marketClosed") return ev.bell ? "bell" : null; // no bell for a close we only loaded into
+  return SFX_FOR[ev.kind] ?? null;
+}
 
 function eventLine(ev: FloorEvent): { text: string; color: string } {
   const base = EVENT_TEXT[ev.kind];
@@ -155,9 +177,16 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
   const lastFloor = useTerminal((s) => s.lastFloor);
   const setLastFloor = useTerminal((s) => s.setLastFloor);
   const addWidget = useTerminal((s) => s.addWidget);
+  const floorView = useTerminal((s) => s.floorView);
+  const setFloorView = useTerminal((s) => s.setFloorView);
+  const sound = useTerminal((s) => s.sound);
+  const setSound = useTerminal((s) => s.setSound);
   const floor: FloorId = widget.floor ?? lastFloor;
+  // A widget pinned to one floor has no building to go back to.
+  const mode: "building" | "floor" = widget.floor ? "floor" : floorView;
   const snap = useFloorSnapshot(floor);
   const theme = FLOORS[floor];
+  const cme = useCmeSessionQuery();
 
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -173,7 +202,18 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     base: { scale: 1, ox: 0, oy: 0 }, // the whole floor fitted into the panel
     cam: { k: 1, cx: WORLD_W / 2, cy: WORLD_H / 2 }, // zoom and the world point at the centre
     drag: null as null | { x: number; y: number; cx: number; cy: number; moved: boolean },
+    mode,
+    sound,
+    futuresOpen: null as boolean | null,
+    building: { t: 0, hover: null, carY: carYFor(floor) } as BuildingState,
+    bview: { scale: 1, ox: 0, oy: 0 },
+    carTarget: null as null | { floor: FloorId; y: number },
   });
+  live.current.mode = mode;
+  live.current.sound = sound;
+  live.current.futuresOpen = cme.data ? ["open", "force_flat", "past_deadline"].includes(cme.data.phase) : null;
+  const [doors, setDoors] = useState<"open" | "closed">("open");
+  const [doorLabel, setDoorLabel] = useState("");
   const [selected, setSelected] = useState<RoleId | null>(null);
   const [feed, setFeed] = useState<Record<FloorId, FeedItem[]>>({ equity: [], crypto: [], futures: [] });
   const [box, setBox] = useState({ left: 0, top: 0, width: 0, height: 0 });
@@ -221,19 +261,30 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     return w;
   };
 
+  /** Apply events to a floor: the world reacts, the feed logs them, and (if on) they make a sound. */
+  const fire = (f: FloorId, evs: FloorEvent[], demo = false) => {
+    if (!evs.length) return;
+    const w = worldFor(f);
+    for (const ev of evs) applyEvent(w, ev);
+    const now = new Date();
+    const line = (ev: FloorEvent) => {
+      const l = eventLine(ev);
+      return demo ? { ...l, text: `[DEMO] ${l.text}` } : l;
+    };
+    setFeed((all) => ({
+      ...all,
+      [f]: [...evs.map((ev) => ({ id: ++feedId.current, at: now, ...line(ev) })).reverse(), ...all[f]].slice(0, 6),
+    }));
+    if (!demo && live.current.sound && live.current.mode === "floor" && live.current.floor === f) {
+      const sfx = evs.map(sfxFor).find((x) => x !== null);
+      if (sfx) play(sfx);
+    }
+  };
+
   // Data changes become events on that floor's world, and lines in its feed.
   useEffect(() => {
-    const w = worldFor(floor);
     const prev = prevSnaps.current.get(floor) ?? null;
-    const evs = diffSnapshots(prev, snap);
-    for (const ev of evs) applyEvent(w, ev);
-    if (evs.length) {
-      const now = new Date();
-      setFeed((all) => ({
-        ...all,
-        [floor]: [...evs.map((ev) => ({ id: ++feedId.current, at: now, ...eventLine(ev) })).reverse(), ...all[floor]].slice(0, 6),
-      }));
-    }
+    fire(floor, diffSnapshots(prev, snap));
     prevSnaps.current.set(floor, snap);
     live.current.floor = floor;
     live.current.snap = snap;
@@ -247,9 +298,74 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
 
   // The header chips (people on the floor, clocks) refresh once a second.
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    const t = setInterval(() => {
+      setTick((n) => n + 1);
+      // The war room runs on the clock, not on data changes.
+      const f = live.current.floor;
+      fire(f, warRoomEvents(worldFor(f).warRoom, live.current.snap.econEvent, Date.now()));
+    }, 1000);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Close the elevator doors, do `action` behind them, open on the new view. */
+  const elevator = (label: string, action: () => void) => {
+    setDoorLabel(label);
+    setDoors("closed");
+    setTimeout(() => {
+      action();
+      setTimeout(() => setDoors("open"), 120);
+    }, 420);
+  };
+  const goToFloor = (f: FloorId) => {
+    // Read live state: this also runs from the render loop's closure.
+    if (f === live.current.floor && live.current.mode === "floor") return;
+    if (live.current.sound) play("chime");
+    elevator(`▲ ${FLOOR_BAND[f].level}F · ${FLOORS[f].label.toUpperCase()}`, () => {
+      setLastFloor(f);
+      setFloorView("floor");
+    });
+  };
+  /**
+   * A scripted tour of every floor event, so the effects can be seen when the
+   * market isn't providing them. Clearly tagged [DEMO]; the real state is put
+   * back at the end.
+   */
+  const [demoRunning, setDemoRunning] = useState(false);
+  const runDemo = () => {
+    if (demoRunning) return;
+    unlockAudio();
+    setDemoRunning(true);
+    const f = floor;
+    const w = worldFor(f);
+    const wasClosed = w.closed;
+    const steps: Array<[number, FloorEvent]> = [
+      [0, { kind: "marketOpen" }],
+      [7000, { kind: "signal", text: "MCL LONG 69.90 RR 4.3" }],
+      [12000, { kind: "rally", text: "SPY +2.10%" }],
+      [18000, { kind: "warRoom", text: "USD CPI", at: Date.now() + 40_000 }],
+      [30000, { kind: "warRoomEnd" }],
+      [34000, { kind: "selloff", text: "SPY -2.40%" }],
+      [40000, { kind: "forceFlat" }],
+      [46000, { kind: "forceFlatEnd" }],
+      ...(wasClosed ? ([[50000, { kind: "marketClosed", bell: true }]] as Array<[number, FloorEvent]>) : []),
+    ];
+    for (const [delay, ev] of steps) {
+      setTimeout(() => {
+        fire(f, [ev], true);
+        if (live.current.sound) {
+          const sfx = sfxFor(ev);
+          if (sfx) play(sfx);
+        }
+      }, delay);
+    }
+    setTimeout(() => setDemoRunning(false), (steps.at(-1)?.[0] ?? 0) + 6000);
+  };
+
+  const goToBuilding = () => {
+    live.current.building.carY = carYFor(floor);
+    elevator("▼ LOBBY · KIMI TOWER", () => setFloorView("building"));
+  };
 
   // Render loop: ~30 fps, paused while the tab is hidden or the widget is off screen.
   useEffect(() => {
@@ -261,6 +377,10 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     worldCanvas.width = WORLD_W;
     worldCanvas.height = WORLD_H;
     const wctx = worldCanvas.getContext("2d")!;
+    const buildingCanvas = document.createElement("canvas");
+    buildingCanvas.width = B_W;
+    buildingCanvas.height = B_H;
+    const bctx = buildingCanvas.getContext("2d")!;
     const fonts = { pixel: cssVar("--font-pixel", "monospace"), vt: cssVar("--font-vt", "monospace") };
     live.current.view.fonts = fonts;
     // Canvas text won't trigger a web-font download on its own; ask for both.
@@ -293,6 +413,8 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       const ox = (w - WORLD_W * scale) / 2;
       const oy = Math.min((h - WORLD_H * scale) / 2, 8);
       live.current.base = { scale, ox, oy };
+      const bs = Math.min(w / B_W, h / B_H);
+      live.current.bview = { scale: bs, ox: (w - B_W * bs) / 2, oy: Math.min((h - B_H * bs) / 2, 8) };
       applyCamera();
       setBox({ left: ox, top: oy, width: WORLD_W * scale, height: WORLD_H * scale });
     };
@@ -309,6 +431,36 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       last = t;
       lastDraw = t;
 
+      if (live.current.mode === "building") {
+        const L = live.current;
+        const b = L.building;
+        b.t += dt;
+        if (L.carTarget) {
+          const d = L.carTarget.y - b.carY;
+          const stepY = Math.sign(d) * Math.min(Math.abs(d), 60 * dt);
+          b.carY += stepY;
+          if (Math.abs(d) < 0.5) {
+            const target = L.carTarget.floor;
+            L.carTarget = null;
+            goToFloor(target);
+          }
+        }
+        const statuses: FloorStatus[] = FLOOR_ORDER.map((id) => {
+          const open = id === "crypto" ? true : id === "equity" ? marketStateNY().open : L.futuresOpen;
+          const wld = worlds.current.get(id);
+          return { id, open, onDuty: wld ? wld.agents.filter((a) => !a.hidden).length : open === false ? 1 : 18 };
+        });
+        const local = new Date();
+        drawBuilding(bctx, b, statuses, local.getHours() + local.getMinutes() / 60);
+        const v = L.bview;
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = "#04060a";
+        ctx.fillRect(0, 0, host.clientWidth, host.clientHeight);
+        ctx.drawImage(buildingCanvas, v.ox, v.oy, B_W * v.scale, B_H * v.scale);
+        drawBuildingOverlay(ctx, { ...v, pixel: L.view.fonts.pixel, vt: L.view.fonts.vt }, b, statuses);
+        return;
+      }
+
       const { floor: f, snap: s, hovered, zone, selected: sel, view } = live.current;
       const w = worldFor(f);
       step(w, dt, s);
@@ -323,7 +475,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       ctx.rect(b.ox, b.oy, WORLD_W * b.scale, WORLD_H * b.scale);
       ctx.clip();
       ctx.drawImage(worldCanvas, view.ox, view.oy, WORLD_W * view.scale, WORLD_H * view.scale);
-      drawOverlay(ctx, view, w, f, s, hovered);
+      drawOverlay(ctx, view, w, f, s, hovered, Date.now());
       ctx.restore();
     };
 
@@ -347,6 +499,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     };
     document.addEventListener("visibilitychange", onVis);
     const onWheel = (e: WheelEvent) => {
+      if (live.current.mode !== "floor") return;
       e.preventDefault();
       const r = canvas.getBoundingClientRect();
       zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
@@ -370,6 +523,11 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     const v = live.current.view;
     return { x: (e.clientX - r.left - v.ox) / v.scale, y: (e.clientY - r.top - v.oy) / v.scale };
   };
+  const toBuilding = (e: React.MouseEvent) => {
+    const r = canvasRef.current!.getBoundingClientRect();
+    const v = live.current.bview;
+    return { x: (e.clientX - r.left - v.ox) / v.scale, y: (e.clientY - r.top - v.oy) / v.scale };
+  };
   const onDown = (e: React.MouseEvent) => {
     const { cam } = live.current;
     live.current.drag = { x: e.clientX, y: e.clientY, cx: cam.cx, cy: cam.cy, moved: false };
@@ -378,6 +536,13 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     setTimeout(() => (live.current.drag = null), 0); // let onClick see whether it was a drag
   };
   const onMove = (e: React.MouseEvent) => {
+    if (live.current.mode === "building") {
+      const p = toBuilding(e);
+      const f = floorAtPoint(p.x, p.y);
+      live.current.building.hover = f;
+      canvasRef.current!.style.cursor = f ? "pointer" : "default";
+      return;
+    }
     const d = live.current.drag;
     if (d && e.buttons === 1) {
       const dx = e.clientX - d.x;
@@ -399,6 +564,15 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     canvasRef.current!.style.cursor = role ? "pointer" : "default";
   };
   const onClick = (e: React.MouseEvent) => {
+    if (live.current.mode === "building") {
+      const p = toBuilding(e);
+      const f = floorAtPoint(p.x, p.y);
+      if (f && !live.current.carTarget) {
+        unlockAudio();
+        live.current.carTarget = { floor: f, y: carYFor(f) }; // ride up, then step out
+      }
+      return;
+    }
     if (live.current.drag?.moved) return;
     const p = toWorld(e);
     const role = hitTest(worldFor(floor), p.x, p.y);
@@ -424,18 +598,53 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex gap-1.5 px-2.5 py-2 items-center shrink-0 flex-wrap">
+        {!widget.floor && (
+          <button className={`term-btn ${mode === "building" ? "active" : ""}`} onClick={goToBuilding} title="Step out to the street view">
+            🏙 Kimi Tower
+          </button>
+        )}
         {!widget.floor &&
           FLOOR_ORDER.map((f) => (
-            <button key={f} className={`term-btn ${f === floor ? "active" : ""}`} onClick={() => setLastFloor(f)}>
-              {FLOORS[f].label}
+            <button
+              key={f}
+              className={`term-btn ${mode === "floor" && f === floor ? "active" : ""}`}
+              onClick={() => goToFloor(f)}
+              title={`Take the elevator to ${FLOOR_BAND[f].level}F`}
+            >
+              {FLOOR_BAND[f].level}F {FLOORS[f].label}
             </button>
           ))}
-        <span className="ml-1 font-semibold" style={{ color: theme.accent, fontFamily: "var(--font-pixel)" }}>
-          {theme.company}
-        </span>
-        <span className={`pill ${status.cls}`}>● {status.text}</span>
-        <span className="pill" title="People on the floor right now">👥 {onFloor}/18</span>
-        {risk && <span className={`pill ${risk.cls}`}>{risk.text}</span>}
+        {mode === "floor" && (
+          <>
+            <span className="ml-1 font-semibold" style={{ color: theme.accent, fontFamily: "var(--font-pixel)" }}>
+              {theme.company}
+            </span>
+            <span className={`pill ${status.cls}`}>● {status.text}</span>
+            <span className="pill" title="People on the floor right now">👥 {onFloor}/18</span>
+            {risk && <span className={`pill ${risk.cls}`}>{risk.text}</span>}
+          </>
+        )}
+        {mode === "floor" && (
+          <button
+            className={`term-btn ${demoRunning ? "active" : ""}`}
+            onClick={runDemo}
+            disabled={demoRunning}
+            title="Play every floor event once (bell, setup, rally, war room, sell-off, FORCE FLAT), tagged [DEMO]"
+          >
+            {demoRunning ? "● Demo running" : "▶ Demo"}
+          </button>
+        )}
+        <button
+          className={`term-btn ${sound ? "active" : ""}`}
+          title={sound ? "Sound on — bells, siren, cheers" : "Sound off"}
+          onClick={() => {
+            unlockAudio();
+            if (!sound) play("chime");
+            setSound(!sound);
+          }}
+        >
+          {sound ? "🔊" : "🔇"}
+        </button>
         <span className="ml-auto hidden lg:flex gap-3 dim text-[11px] num">
           {([["NY", "America/New_York"], ["LDN", "Europe/London"], ["TYO", "Asia/Tokyo"], ["KL", "Asia/Kuala_Lumpur"]] as const).map(([l, tz]) => (
             <span key={l}>
@@ -461,11 +670,11 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           onClick={onClick}
         />
 
-        {/* Live feed, over the conference room (bottom-left of the floor). */}
-        {box.width > 520 && (
+        {/* Live feed, over the pantry (bottom-right); the conference room is the war room. */}
+        {mode === "floor" && box.width > 520 && (
           <div
             className="absolute pointer-events-none"
-            style={{ left: box.left + box.width * 0.035, top: box.top + box.height * 0.66, width: Math.min(300, box.width * 0.24) }}
+            style={{ left: box.left + box.width * 0.735, top: box.top + box.height * 0.66, width: Math.min(300, box.width * 0.24) }}
           >
             <div className="rounded-md border border-white/10 bg-black/55 backdrop-blur-sm px-2 py-1.5">
               <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest dim" style={{ fontFamily: "var(--font-pixel)" }}>
@@ -481,6 +690,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           </div>
         )}
 
+        {mode === "floor" && (
         <div
           className="absolute flex flex-col gap-1"
           style={{ right: Math.max(8, box.left + 8), top: box.top + box.height * 0.13 }}
@@ -497,11 +707,12 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           ))}
           {zoom > 1 && <div className="text-center text-[10px] dim num">{zoom.toFixed(1)}×</div>}
         </div>
+        )}
 
-        {role && (
+        {mode === "floor" && role && (
           <div
             className="absolute w-72 rounded-lg border border-[var(--border-strong)] bg-[var(--panel)]/92 backdrop-blur p-3 shadow-2xl"
-            style={{ right: Math.max(12, box.left + box.width * 0.03), top: Math.max(12, box.top + box.height * 0.6) }}
+            style={{ right: Math.max(12, box.left + box.width * 0.03), top: Math.max(12, box.top + box.height * 0.08) }}
           >
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -524,6 +735,29 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
             </button>
           </div>
         )}
+
+        {/* Elevator doors: slide shut, change the view behind them, slide open. */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {(["left", "right"] as const).map((side) => (
+            <div
+              key={side}
+              className="absolute top-0 bottom-0 w-1/2 transition-transform duration-[400ms] ease-in-out"
+              style={{
+                [side]: 0,
+                transform: doors === "closed" ? "translateX(0)" : `translateX(${side === "left" ? "-101%" : "101%"})`,
+                background:
+                  "repeating-linear-gradient(90deg, #4b5563 0 2px, #6b7280 2px 6px, #9ca3af 6px 7px, #6b7280 7px 12px), linear-gradient(#1f2937, #111827)",
+                boxShadow: side === "left" ? "inset -3px 0 0 #111827" : "inset 3px 0 0 #111827",
+              }}
+            />
+          ))}
+          <div
+            className="absolute left-1/2 top-6 -translate-x-1/2 px-3 py-1 rounded border border-amber-400/60 bg-black/85 text-amber-300 transition-opacity duration-300"
+            style={{ fontFamily: "var(--font-pixel)", fontSize: 13, opacity: doors === "closed" ? 1 : 0, textShadow: "0 0 8px #f5a524" }}
+          >
+            {doorLabel}
+          </div>
+        </div>
       </div>
     </div>
   );

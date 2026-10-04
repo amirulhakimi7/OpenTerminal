@@ -220,7 +220,9 @@ export type Highlight = { person: RoleId | null; zone: ZoneId | null };
 /** Pass 1: the pixel world. */
 export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorId, snap: FloorSnapshot, hl: Highlight) {
   const theme = FLOORS[floor];
-  const night = snap.open === false;
+  // Lights follow the floor's own state (set by open/close events), so the
+  // opening bell visibly switches them on.
+  const night = w.closed;
   const t = w.time;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(staticLayer(w.map, floor), 0, 0);
@@ -308,6 +310,13 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
     ctx.fillRect(r.x * TILE, r.y * TILE, r.w * TILE, r.h * TILE);
   }
 
+  // War room: the conference room glows amber while the team is in session.
+  if (w.warRoom) {
+    const r = w.map.zones.find((z) => z.id === "conference")!.rect;
+    ctx.fillStyle = `rgba(251,191,36,${0.1 + 0.06 * Math.sin(t * 3)})`;
+    ctx.fillRect(r.x * TILE, r.y * TILE, r.w * TILE, r.h * TILE);
+  }
+
   // Hovered room outline.
   if (hl.zone && hl.zone !== "board") {
     const r = w.map.zones.find((z) => z.id === hl.zone)!.rect;
@@ -329,6 +338,30 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
     drawPerson(ctx, a);
   }
 
+  // The bell, swinging in front of the video wall during a ceremony.
+  if (w.bell) {
+    const bx = w.map.pitCenter.x;
+    const by = 3 * TILE + 2;
+    const swing = Math.round(Math.sin(t * 14) * 2);
+    px(ctx, bx - 6, by - 4, 12, 2, "#5b3f2c"); // bracket
+    px(ctx, bx - 4 + swing, by - 2, 8, 2, "#e7c063");
+    px(ctx, bx - 5 + swing, by, 10, 5, "#d4a73a");
+    px(ctx, bx - 6 + swing, by + 5, 12, 2, "#b8892f");
+    px(ctx, bx - 1 + swing * 2, by + 7, 2, 2, "#7a5a1f"); // clapper
+    ctx.strokeStyle = `rgba(253,224,71,${0.5 + 0.5 * Math.sin(t * 10)})`;
+    for (let k = 1; k <= 3; k++) {
+      const r = ((t * 30 + k * 8) % 26) + 6;
+      ctx.globalAlpha = 1 - r / 32;
+      ctx.beginPath();
+      ctx.arc(bx, by + 3, r, Math.PI * 1.1, Math.PI * 1.9);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Confetti.
+  for (const c of w.confetti) px(ctx, Math.round(c.x), Math.round(c.y), 2, 2, c.color);
+
   // After hours: lights down; FORCE FLAT: the whole floor pulses red.
   if (night && !w.alarm) {
     ctx.fillStyle = "rgba(3,5,12,0.5)";
@@ -336,6 +369,10 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
   }
   if (w.alarm) {
     ctx.fillStyle = `rgba(239,68,68,${0.07 + 0.07 * Math.sin(t * 6)})`;
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+  }
+  if (w.panic > 0) {
+    ctx.fillStyle = `rgba(239,68,68,${Math.min(0.18, w.panic * 0.05) * (0.6 + 0.4 * Math.sin(t * 12))})`;
     ctx.fillRect(0, 0, WORLD_W, WORLD_H);
   }
 }
@@ -392,7 +429,7 @@ export function tickerItems(snap: FloorSnapshot): TickerItem[] {
   return out;
 }
 
-export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, floor: FloorId, snap: FloorSnapshot, hovered: RoleId | null) {
+export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, floor: FloorId, snap: FloorSnapshot, hovered: RoleId | null, nowMs: number) {
   const theme = FLOORS[floor];
   const s = v.scale;
   const { pixel, vt } = v.fonts;
@@ -515,6 +552,26 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, fl
     ctx.restore();
   }
 
+  // War-room countdown on the conference room wall.
+  if (w.warRoom) {
+    const r = w.map.zones.find((z) => z.id === "conference")!.rect;
+    const left = Math.round((w.warRoom.at - nowMs) / 1000);
+    const clock = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "LIVE";
+    const label = `${w.warRoom.title} ${clock}`;
+    const f = fs(7, 12, 18);
+    ctx.font = `${f}px ${vt}`;
+    ctx.textAlign = "center";
+    const p = toScreen(v, (r.x + r.w / 2) * TILE, (r.y + 1.5) * TILE);
+    const tw = ctx.measureText(label).width + f;
+    ctx.fillStyle = "rgba(3,6,12,0.9)";
+    roundRect(ctx, p.x - tw / 2, p.y - f * 0.75, tw, f * 1.5, 3);
+    ctx.fill();
+    ctx.strokeStyle = "#fbbf24";
+    ctx.stroke();
+    ctx.fillStyle = left > 0 && left <= 60 && Math.floor(nowMs / 500) % 2 ? "#f87171" : "#fbbf24";
+    ctx.fillText(label, p.x, p.y + 1);
+  }
+
   // Speech bubbles, and the name tag of whoever is hovered.
   const bubbleF = fs(8, 14, 19);
   const bounds = v.frame ?? { l: v.ox, r: v.ox + WORLD_W * s };
@@ -523,6 +580,31 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, fl
     const head = toScreen(v, a.px, a.py - SPRITE_H - 1);
     if (a.bubble) bubble(ctx, bubbleF, head.x, head.y, a.bubble.text, a.bubble.alert, vt, false, bounds);
     else if (hovered === a.role) bubble(ctx, bubbleF, head.x, head.y, ROLE_BY_ID[a.role].title, false, vt, true, bounds);
+  }
+
+  // Opening / closing bell banner.
+  if (w.bell) {
+    const life = w.bell.kind === "open" ? 6 : 5;
+    const alpha = Math.min(1, w.bell.ttl / 0.6, (life - w.bell.ttl) / 0.3);
+    const text = w.bell.kind === "open" ? "OPENING BELL" : "CLOSING BELL";
+    const f = fs(16, 18, 40);
+    const c = toScreen(v, WORLD_W / 2, WORLD_H * 0.32);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.font = `${f}px ${pixel}`;
+    ctx.textAlign = "center";
+    const tw = ctx.measureText(text).width + f * 2;
+    ctx.fillStyle = "rgba(3,6,12,0.85)";
+    roundRect(ctx, c.x - tw / 2, c.y - f, tw, f * 2, 6);
+    ctx.fill();
+    ctx.strokeStyle = "#e7c063";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#fde68a";
+    ctx.shadowColor = "#f5a524";
+    ctx.shadowBlur = 18;
+    ctx.fillText(text, c.x, c.y + 2);
+    ctx.restore();
   }
 }
 

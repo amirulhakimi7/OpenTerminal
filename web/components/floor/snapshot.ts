@@ -16,7 +16,7 @@ export type FloorSnapshot = {
   riskReason: string | null;
   pnl: { label: string; value: number } | null;
   bigMover: { symbol: string; changePct: number } | null;
-  econEvent: { title: string; when: string } | null;
+  econEvent: { title: string; when: string; at: number } | null; // at: epoch ms
   brokerNote: string | null;
 };
 
@@ -70,7 +70,7 @@ export function nextEconEvent(events: EconIn[] | undefined, now: Date): FloorSna
   const when = new Date(upcoming.date).toLocaleString("en-US", {
     timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false,
   });
-  return { title: `${upcoming.country} ${upcoming.title}`, when: `${when} ET` };
+  return { title: `${upcoming.country} ${upcoming.title}`, when: `${when} ET`, at: new Date(upcoming.date).getTime() };
 }
 
 // ETF prices, so label them as the ETFs — "S&P 500 769.64" would misstate the index.

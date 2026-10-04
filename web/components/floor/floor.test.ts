@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffSnapshots } from "./events";
+import { diffSnapshots, warRoomEvents } from "./events";
 import { findPath } from "./pathfind";
 import { ROLES } from "./roster";
 import { applyEvent, createWorld, step } from "./sim";
@@ -66,7 +66,7 @@ describe("findPath", () => {
 describe("diffSnapshots", () => {
   it("first snapshot sets state but replays no news", () => {
     const evs = diffSnapshots(null, base({ open: false, headline: "x", signal: { id: "1", text: "s" } }));
-    expect(evs).toEqual([{ kind: "marketClosed" }]);
+    expect(evs).toEqual([{ kind: "marketClosed", bell: false }]); // loading into a closed market: no bell
   });
   it("unknown market state (null) fires nothing", () => {
     expect(diffSnapshots(null, base({ open: null, riskBlocked: null }))).toEqual([]);
@@ -80,11 +80,37 @@ describe("diffSnapshots", () => {
       { kind: "headline", text: "h2" },
     ]);
   });
+  it("rings the closing bell only for a close it watched", () => {
+    expect(diffSnapshots(base({ open: true }), base({ open: false }))).toEqual([{ kind: "marketClosed", bell: true }]);
+  });
+  it("cheers or panics once when the lead market crosses ±2%", () => {
+    const at = (c: number) => base({ board: [{ label: "SPY", value: "1", changePct: c }] });
+    expect(diffSnapshots(at(1.5), at(2.1))).toEqual([{ kind: "rally", text: "SPY +2.10%" }]);
+    expect(diffSnapshots(at(2.1), at(2.4))).toEqual([]); // already through
+    expect(diffSnapshots(at(-1), at(-2.5))).toEqual([{ kind: "selloff", text: "SPY -2.50%" }]);
+    expect(diffSnapshots(at(-1), base({ board: [{ label: "SPY", value: "1", changePct: null }] }))).toEqual([]);
+  });
   it("opens, force-flats and clears", () => {
     expect(diffSnapshots(base({ open: false, phase: "closed" }), base())).toEqual([{ kind: "marketOpen" }]);
     expect(diffSnapshots(base(), base({ phase: "force_flat" }))).toEqual([{ kind: "forceFlat" }]);
     expect(diffSnapshots(base({ phase: "force_flat" }), base({ phase: "past_deadline" }))).toEqual([{ kind: "forceFlatEnd" }]);
     expect(diffSnapshots(base({ riskBlocked: true }), base({ riskBlocked: false }))).toEqual([{ kind: "riskClear" }]);
+  });
+});
+
+describe("warRoomEvents", () => {
+  const cpi = { title: "USD CPI", when: "Mon 08:30 ET", at: 1_000_000_000_000 };
+  it("convenes inside five minutes of a release", () => {
+    expect(warRoomEvents(null, cpi, cpi.at - 4 * 60_000)).toEqual([{ kind: "warRoom", text: "USD CPI", at: cpi.at }]);
+    expect(warRoomEvents(null, cpi, cpi.at - 10 * 60_000)).toEqual([]);
+  });
+  it("stays during the release and breaks up after", () => {
+    const active = { title: cpi.title, at: cpi.at };
+    expect(warRoomEvents(active, cpi, cpi.at + 60_000)).toEqual([]);
+    expect(warRoomEvents(active, null, cpi.at + 3 * 60_000)).toEqual([{ kind: "warRoomEnd" }]);
+  });
+  it("does nothing with no release scheduled", () => {
+    expect(warRoomEvents(null, null, Date.now())).toEqual([]);
   });
 });
 
@@ -101,7 +127,7 @@ describe("simulation", () => {
 
   it("sends everyone but the night watch home when the market closes, and back when it opens", () => {
     const w = createWorld(MAP, 3);
-    applyEvent(w, { kind: "marketClosed" });
+    applyEvent(w, { kind: "marketClosed", bell: false });
     for (let i = 0; i < 1200; i++) step(w, 0.05, base({ open: false }));
     const onDuty = w.agents.filter((a) => !a.hidden).map((a) => a.role);
     expect(onDuty).toEqual(["monitoring_analyst"]);
@@ -109,6 +135,23 @@ describe("simulation", () => {
     applyEvent(w, { kind: "marketOpen" });
     for (let i = 0; i < 1600; i++) step(w, 0.05, base());
     expect(w.agents.every((a) => !a.hidden)).toBe(true);
+  });
+
+  it("an open that interrupts a close brings everyone back, and vice versa", () => {
+    const w = createWorld(MAP, 12);
+    applyEvent(w, { kind: "marketClosed", bell: false });
+    for (let i = 0; i < 20; i++) step(w, 0.05, base({ open: false })); // a second in: half-way out
+    applyEvent(w, { kind: "marketOpen" });
+    for (let i = 0; i < 1600; i++) step(w, 0.05, base());
+    expect(w.agents.filter((a) => a.hidden)).toHaveLength(0);
+
+    applyEvent(w, { kind: "marketClosed", bell: false });
+    for (let i = 0; i < 1200; i++) step(w, 0.05, base({ open: false }));
+    applyEvent(w, { kind: "marketOpen" });
+    for (let i = 0; i < 2; i++) step(w, 0.05, base());
+    applyEvent(w, { kind: "marketClosed", bell: false }); // closes again before anyone got in
+    for (let i = 0; i < 1600; i++) step(w, 0.05, base({ open: false }));
+    expect(w.agents.filter((a) => !a.hidden).map((a) => a.role)).toEqual(["monitoring_analyst"]);
   });
 
   it("walks the signal to the Trade Analyst", () => {
@@ -130,6 +173,40 @@ describe("simulation", () => {
     expect(w.byRole.risk_manager.bubble?.alert).toBe(true);
     applyEvent(w, { kind: "riskClear" });
     expect(w.riskAlarm).toBe(false);
+  });
+
+  it("rings the opening bell and applauds", () => {
+    const w = createWorld(MAP, 4);
+    applyEvent(w, { kind: "marketOpen" });
+    expect(w.bell?.kind).toBe("open");
+    for (let i = 0; i < 200; i++) step(w, 0.05, base());
+    expect(w.bell).toBeNull();
+  });
+
+  it("throws confetti on a rally and it settles", () => {
+    const w = createWorld(MAP, 6);
+    applyEvent(w, { kind: "rally", text: "SPY +2.10%" });
+    expect(w.confetti.length).toBeGreaterThan(100);
+    for (let i = 0; i < 200; i++) step(w, 0.05, base());
+    expect(w.confetti).toHaveLength(0);
+  });
+
+  it("gathers the war room in the conference room, then sends them back", () => {
+    const w = createWorld(MAP, 8);
+    applyEvent(w, { kind: "warRoom", text: "USD CPI", at: 0 });
+    for (let i = 0; i < 600; i++) step(w, 0.05, base());
+    const conf = MAP.zones.find((z) => z.id === "conference")!.rect;
+    const inRoom = (r: (typeof ROLES)[number]["id"]) => {
+      const t = w.byRole[r].tile;
+      return t.x >= conf.x && t.x < conf.x + conf.w && t.y >= conf.y && t.y < conf.y + conf.h;
+    };
+    expect(inRoom("macro_analyst")).toBe(true);
+    expect(inRoom("risk_manager")).toBe(true);
+    expect(inRoom("news_analyst")).toBe(false);
+    applyEvent(w, { kind: "warRoomEnd" });
+    for (let i = 0; i < 800; i++) step(w, 0.05, base());
+    expect(inRoom("macro_analyst")).toBe(false);
+    expect(w.warRoom).toBeNull();
   });
 
   it("survives a huge dt without leaving the map", () => {

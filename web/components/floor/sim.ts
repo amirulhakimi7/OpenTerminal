@@ -17,6 +17,9 @@ export type State = "seated" | "walking" | "talking" | "offDuty";
 
 export type Bubble = { text: string; ttl: number; alert: boolean };
 
+/** One confetti square. World px; velocity in px/s. */
+export type Particle = { x: number; y: number; vx: number; vy: number; color: string; life: number };
+
 /** A glowing data-flow line from one desk to another while a message travels. */
 export type Link = { from: Point; to: Point; color: string; ttl: number; life: number };
 
@@ -49,6 +52,10 @@ export type World = {
   riskAlarm: boolean; // NO NEW RISK
   closed: boolean;
   links: Link[];
+  bell: { kind: "open" | "close"; ttl: number } | null; // opening/closing bell ceremony
+  confetti: Particle[];
+  panic: number; // seconds of red sell-off flash left
+  warRoom: { title: string; at: number } | null;
   time: number;
 };
 
@@ -94,7 +101,7 @@ export function createWorld(map: FloorMap, seed = 1): World {
     };
   });
   const byRole = Object.fromEntries(agents.map((a) => [a.role, a])) as Record<RoleId, Agent>;
-  return { map, agents, byRole, rng, alarm: false, riskAlarm: false, closed: false, time: 0, links: [] };
+  return { map, agents, byRole, rng, alarm: false, riskAlarm: false, closed: false, time: 0, links: [], bell: null, confetti: [], panic: 0, warRoom: null };
 }
 
 function say(a: Agent, text: string, ttl = 5, alert = false) {
@@ -227,6 +234,16 @@ export function step(w: World, dt: number, snap: FloorSnapshot) {
   w.time += dt;
   for (const l of w.links) l.ttl -= dt;
   w.links = w.links.filter((l) => l.ttl > 0);
+  if (w.bell && (w.bell.ttl -= dt) <= 0) w.bell = null;
+  w.panic = Math.max(0, w.panic - dt);
+  for (const c of w.confetti) {
+    c.vy += 60 * dt; // gravity
+    c.vx *= 0.99;
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+    c.life -= dt;
+  }
+  w.confetti = w.confetti.filter((c) => c.life > 0 && c.y < w.map.h * TILE);
   for (const a of w.agents) {
     if (a.bubble) {
       a.bubble.ttl -= dt;
@@ -277,19 +294,37 @@ export function applyEvent(w: World, ev: FloorEvent) {
   };
 
   switch (ev.kind) {
-    case "marketClosed":
+    case "marketClosed": {
       w.closed = true;
+      // A close we watched happen gets the closing bell and a round of applause first.
+      const ceremony = ev.bell ? 4 : 0;
+      if (ev.bell) w.bell = { kind: "close", ttl: 5 };
       w.agents.forEach((a, i) => {
-        if (a.role === NIGHT_SHIFT || a.hidden) return;
+        if (a.hidden) {
+          a.pending = null; // someone still waiting to come in stays home
+          return;
+        }
+        if (a.role === NIGHT_SHIFT) return;
         a.carrying = false;
         a.deliverTo = null;
-        schedule(a, w.map.exit, "leave", 0.3 * i * w.rng() + w.rng() * 2);
+        if (ev.bell) say(a, "👏", 3);
+        schedule(a, w.map.exit, "leave", ceremony + 0.3 * i * w.rng() + w.rng() * 2);
       });
       say(w.byRole[NIGHT_SHIFT], "Night watch 🌙", 4);
       break;
+    }
     case "marketOpen":
       w.closed = false;
+      w.bell = { kind: "open", ttl: 6 };
+      for (const a of w.agents) if (!a.hidden) say(a, "👏", 3);
       w.agents.forEach((a) => {
+        // Anyone still on the way out turns round and goes back to their desk.
+        const leaving = a.pending?.onArrive === "leave" || (a.state === "walking" && a.onArrive === "leave");
+        if (!a.hidden && leaving) {
+          a.pending = null;
+          goHome(w, a);
+          return;
+        }
         if (!a.hidden) return;
         const c = center(w.map.exit);
         Object.assign(a, { px: c.x, py: c.y, tile: { ...w.map.exit }, state: "offDuty" });
@@ -304,6 +339,48 @@ export function applyEvent(w: World, ev: FloorEvent) {
         const spot = w.map.gatherSpots[i % w.map.gatherSpots.length];
         schedule(a, spot, "gather", w.rng() * 1.5, RUN);
       });
+      break;
+    case "rally": {
+      const colors = ["#f5a524", "#22c55e", "#38bdf8", "#f472b6", "#a78bfa", "#facc15"];
+      for (let i = 0; i < 140; i++) {
+        w.confetti.push({
+          x: w.rng() * w.map.w * TILE,
+          y: TILE + w.rng() * 20,
+          vx: (w.rng() - 0.5) * 40,
+          vy: 10 + w.rng() * 30,
+          color: colors[i % colors.length],
+          life: 3 + w.rng() * 3,
+        });
+      }
+      for (const a of w.agents) if (!a.hidden && w.rng() < 0.7) say(a, w.rng() < 0.5 ? "🎉" : "🚀", 4);
+      if (on("trade_analyst")) say(w.byRole.trade_analyst, `Rally! ${ev.text}`, 6);
+      break;
+    }
+    case "selloff": {
+      w.panic = 4;
+      const awake = w.agents.filter((a) => !a.hidden && a.state === "seated");
+      for (let i = 0; i < Math.min(4, awake.length); i++) {
+        const a = awake[Math.floor(w.rng() * awake.length)];
+        say(a, "😱", 4);
+        goTo(w, a, besideSeat(w, "risk_manager"), "talk", RUN);
+      }
+      if (on("risk_manager")) say(w.byRole.risk_manager, `Sell-off: ${ev.text}`, 6, true);
+      break;
+    }
+    case "warRoom": {
+      w.warRoom = { title: ev.text, at: ev.at };
+      const team: RoleId[] = ["macro_analyst", "economic_research_analyst", "trade_analyst", "strategy_analyst", "risk_manager", "portfolio_manager"];
+      team.forEach((role, i) => {
+        if (!on(role)) return;
+        const a = w.byRole[role];
+        if (i === 0) say(a, `War room: ${ev.text}`, 6);
+        schedule(a, w.map.conferenceSpots[i % w.map.conferenceSpots.length], "gather", w.rng() * 2);
+      });
+      break;
+    }
+    case "warRoomEnd":
+      w.warRoom = null;
+      for (const a of w.agents) if (!a.hidden && a.state === "talking" && !w.alarm) goHome(w, a);
       break;
     case "forceFlatEnd":
       w.alarm = false;

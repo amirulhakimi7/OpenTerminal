@@ -54,6 +54,10 @@ type TerminalState = {
   account: AccountInput;
   lastFloor: FloorId;
   setLastFloor: (f: FloorId) => void;
+  floorView: "building" | "floor";
+  setFloorView: (v: "building" | "floor") => void;
+  sound: boolean;
+  setSound: (on: boolean) => void;
   setAccount: (a: Partial<AccountInput>) => void;
   setActiveSymbol: (s: string) => void;
   setCommandOpen: (open: boolean) => void;
@@ -188,6 +192,10 @@ export const useTerminal = create<TerminalState>()(
       account: { balance: 50000, peakClose: 50000, sessionPnl: 0 },
       lastFloor: "futures",
       setLastFloor: (f) => set({ lastFloor: f }),
+      floorView: "building",
+      setFloorView: (v) => set({ floorView: v }),
+      sound: false, // off until the user turns it on
+      setSound: (on) => set({ sound: on }),
       setAccount: (a) => set((st) => ({ account: { ...st.account, ...a } })),
       setActiveSymbol: (s) => set({ activeSymbol: s.toUpperCase() }),
       setCommandOpen: (open) => set({ commandOpen: open }),
