@@ -114,6 +114,7 @@ function paint(rows: string[], colors: Record<string, string>, mirror: boolean):
 
 /** The sprite for a role facing `dir` at walk frame `frame` (0-3). */
 export function personSprite(role: RoleId, dir: Dir, frame: number): HTMLCanvasElement {
+  frame = Number.isFinite(frame) ? ((Math.floor(frame) % 4) + 4) % 4 : 0; // never index the walk cycle out of range
   const key = `${role}|${dir}|${frame}`;
   const hit = cache.get(key);
   if (hit) return hit;
@@ -122,7 +123,7 @@ export function personSprite(role: RoleId, dir: Dir, frame: number): HTMLCanvasE
   const base = (view === "down" ? DOWN : view === "up" ? UP : SIDE).slice();
   const { colors, longHair } = look(role);
   if (longHair) for (const [row, line] of Object.entries(LONG[view])) base[Number(row)] = line;
-  const legs = (side ? LEGS_SIDE : LEGS_DOWN)[frame % 4];
+  const legs = (side ? LEGS_SIDE : LEGS_DOWN)[frame];
   base[11] = legs[0];
   base[12] = legs[1];
   const sprite = paint(base, colors, dir === 1);

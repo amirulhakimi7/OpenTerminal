@@ -230,7 +230,9 @@ function ambient(w: World, a: Agent, snap: FloorSnapshot) {
 
 /** Advance the world by `dt` seconds. */
 export function step(w: World, dt: number, snap: FloorSnapshot) {
-  dt = Math.min(dt, 0.1); // a stalled tab must not teleport people through walls
+  // A stalled tab must not teleport people through walls, and a rAF timestamp a
+  // hair earlier than the last performance.now() must not run time backwards.
+  dt = Math.min(Math.max(dt, 0), 0.1);
   w.time += dt;
   for (const l of w.links) l.ttl -= dt;
   w.links = w.links.filter((l) => l.ttl > 0);

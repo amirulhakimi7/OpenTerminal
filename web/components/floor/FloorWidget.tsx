@@ -219,6 +219,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
   const [box, setBox] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [, setTick] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [feedOpen, setFeedOpen] = useState(false);
   const feedId = useRef(0);
 
   /** Recompute the view from the fitted base and the camera, keeping the floor filling its frame. */
@@ -427,7 +428,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       raf = requestAnimationFrame(frame);
       // A little slack so a 60 Hz display draws every 2nd frame (30 fps), not every 3rd.
       if (t - lastDraw < minFrameMs - 4) return;
-      const dt = (t - last) / 1000;
+      const dt = Math.max(0, (t - last) / 1000); // rAF's timestamp can trail performance.now()
       last = t;
       lastDraw = t;
 
@@ -670,26 +671,6 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           onClick={onClick}
         />
 
-        {/* Live feed, over the pantry (bottom-right); the conference room is the war room. */}
-        {mode === "floor" && box.width > 520 && (
-          <div
-            className="absolute pointer-events-none"
-            style={{ left: box.left + box.width * 0.735, top: box.top + box.height * 0.66, width: Math.min(300, box.width * 0.24) }}
-          >
-            <div className="rounded-md border border-white/10 bg-black/55 backdrop-blur-sm px-2 py-1.5">
-              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest dim" style={{ fontFamily: "var(--font-pixel)" }}>
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--down)] animate-pulse" /> Live floor feed
-              </div>
-              {(feed[floor].length ? feed[floor] : [{ id: 0, at: now, text: "Waiting for the next event…", color: "#64748b" }]).map((f) => (
-                <div key={f.id} className="flex gap-1.5 text-[13px] leading-tight mt-0.5" style={{ fontFamily: "var(--font-vt)" }}>
-                  <span className="dim shrink-0">{fmtTime(f.at)}</span>
-                  <span className="truncate" style={{ color: f.color }}>{f.text}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {mode === "floor" && (
         <div
           className="absolute flex flex-col gap-1"
@@ -736,6 +717,50 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           </div>
         )}
 
+        {/* Live feed: one line just under the floor (in the space below it when there is
+            some, else along the bottom edge), so it never covers the floor. Click for more. */}
+        {mode === "floor" && (
+        <div
+          className="absolute rounded-md border border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur"
+          style={{
+            left: box.left,
+            width: box.width,
+            ...(hostRef.current && box.top + box.height + 40 <= hostRef.current.clientHeight
+              ? { top: box.top + box.height + 6 }
+              : { bottom: 4 }),
+          }}
+        >
+          {feedOpen && (
+            <div className="absolute bottom-full left-0 right-0 z-10 mb-1 max-h-48 overflow-auto rounded-md border border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur px-3 py-2">
+              {feed[floor].length === 0 && <div className="dim text-[13px]" style={{ fontFamily: "var(--font-vt)" }}>No events yet on this floor.</div>}
+              {feed[floor].map((f) => (
+                <div key={f.id} className="flex gap-2 text-[14px] leading-snug" style={{ fontFamily: "var(--font-vt)" }}>
+                  <span className="dim shrink-0">{fmtTime(f.at)}</span>
+                  <span className="truncate" style={{ color: f.color }}>{f.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--panel-2)] transition-colors"
+            onClick={() => setFeedOpen((o) => !o)}
+            title={feedOpen ? "Hide recent floor events" : "Show recent floor events"}
+          >
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--down)] animate-pulse shrink-0" />
+            <span className="text-[10px] tracking-widest dim shrink-0" style={{ fontFamily: "var(--font-pixel)" }}>LIVE FEED</span>
+            {feed[floor][0] ? (
+              <span className="flex gap-2 min-w-0 text-[14px]" style={{ fontFamily: "var(--font-vt)" }}>
+                <span className="dim shrink-0">{fmtTime(feed[floor][0].at)}</span>
+                <span className="truncate" style={{ color: feed[floor][0].color }}>{feed[floor][0].text}</span>
+              </span>
+            ) : (
+              <span className="dim text-[14px]" style={{ fontFamily: "var(--font-vt)" }}>Waiting for the next event…</span>
+            )}
+            <span className="ml-auto dim text-[11px] shrink-0">{feedOpen ? "▾" : "▴"} {feed[floor].length}</span>
+          </button>
+        </div>
+      )}
+
         {/* Elevator doors: slide shut, change the view behind them, slide open. */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           {(["left", "right"] as const).map((side) => (
@@ -759,6 +784,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           </div>
         </div>
       </div>
+
     </div>
   );
 }

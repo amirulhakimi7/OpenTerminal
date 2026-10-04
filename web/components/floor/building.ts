@@ -167,20 +167,80 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, st: BuildingState, f
       ctx.fillRect(x - 8, GROUND - 17, 17, 17);
     }
   }
-  const cars = [
-    { lane: GROUND + 6, speed: 34, color: "#ef4444", off: 0 },
-    { lane: GROUND + 6, speed: 34, color: "#f5f5f4", off: 160 },
-    { lane: GROUND + 16, speed: -26, color: "#38bdf8", off: 60 },
-    { lane: GROUND + 16, speed: -26, color: "#facc15", off: 230 },
-  ];
-  for (const c of cars) {
-    const span = B_W + 40;
-    const x = (((c.off + t * c.speed) % span) + span) % span - 20;
-    px(ctx, x, c.lane, 14, 5, c.color);
-    px(ctx, x + 3, c.lane - 2, 8, 2, c.color);
-    px(ctx, x + 4, c.lane - 1, 6, 1, "#93c5fd");
-    if (sky.night) px(ctx, c.speed > 0 ? x + 14 : x - 4, c.lane + 1, 4, 2, "#fde68a");
+  // 2026-spec F1 cars racing down the street, both directions.
+  for (const c of F1_GRID) {
+    const span = B_W + 70;
+    const x = (((c.off + t * c.speed) % span) + span) % span - 35;
+    drawF1(ctx, x, c.lane, c.speed > 0 ? 1 : -1, c.livery, t, sky.night);
   }
+}
+
+type Livery = { body: string; accent: string; helmet: string };
+
+// Generic colour schemes, not any real team's livery; the amber one is Kimi's.
+const LIVERY: Record<string, Livery> = {
+  kimi: { body: "#f5a524", accent: "#111827", helmet: "#f8fafc" },
+  papaya: { body: "#ff7a1a", accent: "#1e3a8a", helmet: "#facc15" },
+  rosso: { body: "#d90429", accent: "#fde047", helmet: "#fde047" },
+  silver: { body: "#c7ced6", accent: "#0f766e", helmet: "#0f172a" },
+  navy: { body: "#1e2a78", accent: "#ef4444", helmet: "#f8fafc" },
+  racing: { body: "#0b5d3b", accent: "#a3e635", helmet: "#f8fafc" },
+};
+
+const F1_GRID = [
+  { lane: GROUND + 3, speed: 70, livery: LIVERY.kimi, off: 0 },
+  { lane: GROUND + 3, speed: 70, livery: LIVERY.papaya, off: 95 },
+  { lane: GROUND + 3, speed: 70, livery: LIVERY.rosso, off: 210 },
+  { lane: GROUND + 13, speed: -60, livery: LIVERY.silver, off: 40 },
+  { lane: GROUND + 13, speed: -60, livery: LIVERY.navy, off: 170 },
+  { lane: GROUND + 13, speed: -60, livery: LIVERY.racing, off: 290 },
+];
+
+/**
+ * A 2026-regulation F1 car in side view, 30x8 px, nose toward `dir`: long and
+ * low, halo over the cockpit, slim pointed nose, and an active-aero rear wing
+ * that opens flat on the straight and closes for the corner.
+ */
+function drawF1(ctx: CanvasRenderingContext2D, x: number, y: number, dir: 1 | -1, l: Livery, t: number, night: boolean) {
+  const L = 30;
+  const p = (i: number, j: number, w: number, h: number, c: string) =>
+    px(ctx, dir === 1 ? x + i : x + L - 1 - i - (w - 1), y + j, w, h, c);
+  const open = Math.floor(t * 0.7 + x * 0.01) % 2 === 0; // active aero: straight-line mode
+
+  // Speed streaks behind the car.
+  ctx.fillStyle = "rgba(226,232,240,0.22)";
+  for (const [dx, dy, len] of [[-3, 2, 8], [-6, 4, 12], [-2, 6, 6]]) {
+    ctx.fillRect(Math.round(dir === 1 ? x + dx - len : x + L - 1 - dx), y + dy, len, 1);
+  }
+  // Rear wing: endplate, main plane, flap (lifts flat when open).
+  p(0, 0, 1, 5, l.accent);
+  p(0, 0, 5, 1, l.body);
+  p(1, open ? 1 : 2, 4, 1, l.accent);
+  // Engine cover, airbox, sidepod, floor.
+  p(5, 3, 11, 2, l.body);
+  p(12, 1, 3, 2, l.body);
+  p(6, 5, 16, 1, l.body);
+  p(7, 4, 8, 1, l.accent); // livery stripe
+  p(6, 6, 16, 1, "#0b0d12"); // floor / plank
+  // Cockpit: helmet under the halo.
+  p(16, 2, 2, 2, l.helmet);
+  p(15, 1, 4, 1, "#0f172a");
+  p(18, 2, 1, 2, "#0f172a");
+  // Slim nose and front wing.
+  p(19, 4, 8, 1, l.body);
+  p(26, 5, 3, 1, l.body);
+  p(23, 6, 7, 1, l.accent);
+  p(29, 5, 1, 2, l.accent); // front endplate
+  // Wheels, spinning.
+  const spoke = Math.floor(t * 30) % 2;
+  for (const wx of [2, 21]) {
+    p(wx, 3, 5, 5, "#0b0d12");
+    p(wx + 1, 4, 3, 3, "#1f2937");
+    p(wx + 2, spoke ? 4 : 5, 1, spoke ? 3 : 1, "#9ca3af");
+    if (!spoke) p(wx + 1, 5, 3, 1, "#9ca3af");
+  }
+  // Rain light, blinking at the back after dark.
+  if (night && Math.floor(t * 4) % 2 === 0) p(0, 3, 1, 1, "#ef4444");
 }
 
 /** Which trading floor is under a world point, if any. */
@@ -244,7 +304,7 @@ export function drawBuildingOverlay(ctx: CanvasRenderingContext2D, v: BView, st:
   ctx.textAlign = "center";
   ctx.font = `${fs(5.5, 13, 20)}px ${v.vt}`;
   ctx.fillStyle = "rgba(226,232,240,0.85)";
-  ctx.fillText("Click a floor to take the elevator up", v.ox + (B_W / 2) * s, v.oy + (B_H - 6) * s);
+  ctx.fillText("Click a floor to take the elevator up", v.ox + (B_W / 2) * s, v.oy + 8 * s);
 }
 
 function mix(a: string, b: string, k: number): string {

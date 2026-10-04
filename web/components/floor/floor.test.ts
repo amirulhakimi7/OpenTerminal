@@ -209,6 +209,13 @@ describe("simulation", () => {
     expect(w.warRoom).toBeNull();
   });
 
+  it("treats a negative dt as no time passing", () => {
+    const w = createWorld(MAP, 2);
+    step(w, -0.002, base());
+    expect(w.time).toBe(0);
+    for (const a of w.agents) expect(a.walkT).toBeGreaterThanOrEqual(0);
+  });
+
   it("survives a huge dt without leaving the map", () => {
     const w = createWorld(MAP, 1);
     applyEvent(w, { kind: "forceFlat" });
