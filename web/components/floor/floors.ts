@@ -12,6 +12,7 @@ export type FloorTheme = {
   tagline: string;
   accent: string; // board LEDs, logo
   floor: [string, string]; // corridor checker
+  wood: [string, string, string]; // room floorboards: light, dark, seam
   wall: string;
   wallTop: string;
   newsSymbol: string; // symbol whose headlines the News Analyst reads
@@ -25,6 +26,7 @@ export const FLOORS: Record<FloorId, FloorTheme> = {
     tagline: "US & regional equities",
     accent: "#38bdf8",
     floor: ["#3a3530", "#35302b"],
+    wood: ["#8a6748", "#7f5e41", "#5a412c"],
     wall: "#1d2433",
     wallTop: "#2c3650",
     newsSymbol: "SPY",
@@ -36,6 +38,7 @@ export const FLOORS: Record<FloorId, FloorTheme> = {
     tagline: "Spot digital assets, 24/7",
     accent: "#a78bfa",
     floor: ["#2b2a3a", "#272635"],
+    wood: ["#7a6470", "#705b67", "#4d3d48"],
     wall: "#1c1830",
     wallTop: "#2e2650",
     newsSymbol: "BTC",
@@ -47,6 +50,7 @@ export const FLOORS: Record<FloorId, FloorTheme> = {
     tagline: "CME energy futures",
     accent: "#f5a524",
     floor: ["#33302a", "#2e2b25"],
+    wood: ["#94704a", "#886641", "#5f462c"],
     wall: "#26201a",
     wallTop: "#40342a",
     newsSymbol: "CL=F",

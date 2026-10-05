@@ -3,6 +3,7 @@ import { diffSnapshots, warRoomEvents } from "./events";
 import { findPath } from "./pathfind";
 import { createPlayer, drinkCoffee, fixtures, nearestInteractable, stepPlayer, walkTo } from "./player";
 import { ROLES } from "./roster";
+import { SPRITE_H, SPRITE_W, spriteRows } from "./sprites";
 import { applyEvent, createWorld, step } from "./sim";
 import { cryptoSnapshot, equitySnapshot, factFor, futuresSnapshot, nextEconEvent, reportFor, type FloorSnapshot } from "./snapshot";
 import { buildFloor, walkable } from "./tilemap";
@@ -40,6 +41,39 @@ describe("floor plan", () => {
       expect(findPath(seat, MAP.exit, canWalk, MAP.w, MAP.h), `${r.id} -> exit`).not.toBeNull();
       expect(findPath(seat, MAP.pantrySpots[0], canWalk, MAP.w, MAP.h), `${r.id} -> pantry`).not.toBeNull();
       expect(findPath(seat, MAP.gatherSpots[0], canWalk, MAP.w, MAP.h), `${r.id} -> board`).not.toBeNull();
+    }
+  });
+
+  it("has enough room in front of the video wall for everyone", () => {
+    expect(MAP.gatherSpots.length).toBeGreaterThanOrEqual(ROLES.length);
+    for (const g of MAP.gatherSpots) expect(walkable(MAP, g.x, g.y)).toBe(true);
+  });
+
+  it("lets you walk into every room from the door", () => {
+    for (const z of MAP.zones) {
+      if (z.id === "board") continue;
+      const r = z.rect;
+      let inside: { x: number; y: number } | null = null;
+      for (let y = r.y; y < r.y + r.h && !inside; y++) for (let x = r.x; x < r.x + r.w && !inside; x++) if (canWalk(x, y)) inside = { x, y };
+      expect(inside, z.id).not.toBeNull();
+      expect(findPath(MAP.entrance, inside!, canWalk, MAP.w, MAP.h), `door -> ${z.id}`).not.toBeNull();
+    }
+  });
+
+  it("keeps rooms from overlapping", () => {
+    const rooms = MAP.zones.filter((z) => z.id !== "board");
+    for (const a of rooms) for (const b of rooms) {
+      if (a === b) continue;
+      const apart = a.rect.x + a.rect.w <= b.rect.x || b.rect.x + b.rect.w <= a.rect.x || a.rect.y + a.rect.h <= b.rect.y || b.rect.y + b.rect.h <= a.rect.y;
+      expect(apart, `${a.id} / ${b.id}`).toBe(true);
+    }
+  });
+
+  it("can reach the coffee machine and the bell", () => {
+    const f = fixtures(MAP);
+    for (const p of [f.coffee, f.bell]) {
+      const t = { x: Math.floor(p.x / 16), y: Math.floor(p.y / 16) };
+      expect(findPath(MAP.entrance, t, canWalk, MAP.w, MAP.h)).not.toBeNull();
     }
   });
 });
@@ -307,7 +341,7 @@ describe("player", () => {
 
   it("follows a click-to-move route to the bell", () => {
     const p = createPlayer(MAP);
-    expect(walkTo(p, MAP, { x: 20, y: 3 })).toBe(true);
+    expect(walkTo(p, MAP, { x: 25, y: 3 })).toBe(true);
     for (let i = 0; i < 600 && p.path.length; i++) stepPlayer(p, MAP, still, 0.05);
     const f = fixtures(MAP);
     expect(Math.hypot(p.px - f.bell.x, p.py - f.bell.y)).toBeLessThan(22);
@@ -352,5 +386,19 @@ describe("reportFor", () => {
   });
   it("says when someone is off duty", () => {
     expect(reportFor("news_analyst", base(), true)[0]).toContain("off for the night");
+  });
+});
+
+describe("sprites", () => {
+  it("draws every pose, hairstyle and walk frame on a full 12x20 grid", () => {
+    for (const view of ["down", "up", "side"] as const) {
+      for (const hair of ["short", "crop", "long"] as const) {
+        for (let f = 0; f < 4; f++) {
+          const rows = spriteRows(view, hair, f);
+          expect(rows, `${view}/${hair}/${f}`).toHaveLength(SPRITE_H);
+          for (const r of rows) expect(r.length, `${view}/${hair}/${f}: "${r}"`).toBe(SPRITE_W);
+        }
+      }
+    }
   });
 });

@@ -739,7 +739,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     const tx = Math.floor(p.x / TILE);
     const ty = Math.floor(p.y / TILE);
     const desk = (Object.entries(MAP.desks) as Array<[keyof typeof MAP.desks, (typeof MAP.desks)[keyof typeof MAP.desks]]>).find(
-      ([, d]) => d.desk.x === tx && d.desk.y === ty
+      ([, d]) => Math.abs(d.desk.x - tx) <= 1 && d.desk.y === ty // desks are three tiles wide
     );
     if (desk) {
       interact({ kind: "desk", role: desk[0], x: tx * TILE + 8, y: ty * TILE + 8 });

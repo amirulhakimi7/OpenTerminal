@@ -1,15 +1,19 @@
 // Drawing. Two passes:
-//   1. the world, on a 640x384 canvas, in pixels: floor, glass, the pit,
-//      desks, screens, light, data-flow lines and people;
+//   1. the world, on a 640x384 canvas, in pixels, in a 3/4 view: floors,
+//      back walls, furniture, screens, light, data-flow lines and people;
 //   2. text on the display canvas at screen resolution: the LED ticker, the
 //      video wall, labels and speech bubbles, in pixel fonts.
 
 import { FLOORS, type FloorId } from "./floors";
-import { DEPARTMENTS, ROLE_BY_ID, type RoleId } from "./roster";
-import { personSprite, playerSprite, SPRITE_H, SPRITE_W } from "./sprites";
+import { ROLE_BY_ID, type RoleId } from "./roster";
+import { personSprite, playerSprite, SEATED_ROWS, SPRITE_H, SPRITE_W } from "./sprites";
 import type { Interactable, Player } from "./player";
 import type { FloorSnapshot } from "./snapshot";
-import { MAP_H, MAP_W, T, TILE, tileAt, type FloorMap, type ZoneId } from "./tilemap";
+import { H_WALL_ROWS, MAP_H, MAP_W, T, TILE, tileAt, type FloorMap, type Ground, type ZoneId } from "./tilemap";
+import {
+  chair, counter, decor, desk, deskScreens, doorway, exitDoor, floorLamp, ground, hub, hubScreens, plant, px,
+  server, serverLeds, shelf, sofa, table, wallCap, wallFace, wallScreenFrame, wallSouth,
+} from "./furniture";
 import type { Agent, World } from "./sim";
 
 export const WORLD_W = MAP_W * TILE;
@@ -17,34 +21,20 @@ export const WORLD_H = MAP_H * TILE;
 
 const staticCache = new Map<FloorId, HTMLCanvasElement>();
 
-function px(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, c: string) {
-  ctx.fillStyle = c;
-  ctx.fillRect(x, y, w, h);
-}
-
-const GROUND: Record<number, [string, string]> = {
-  [T.CarpetOps]: DEPARTMENTS[0].carpet,
-  [T.CarpetResearch]: DEPARTMENTS[1].carpet,
-  [T.CarpetRisk]: DEPARTMENTS[2].carpet,
-  [T.Conference]: ["#3b3328", "#352e24"],
-  [T.Pantry]: ["#3c4650", "#37414a"],
-};
-const SOLID = new Set<number>([T.Wall, T.Desk, T.Board, T.Plant, T.Table, T.Counter, T.Glass, T.Post, T.Sofa, T.Door]);
-
-function groundUnder(map: FloorMap, x: number, y: number): number {
-  const t = tileAt(map, x, y);
-  if (!SOLID.has(t)) return t;
-  for (const [dx, dy] of [[0, 1], [1, 0], [-1, 0], [0, -1]]) {
-    const n = tileAt(map, x + dx, y + dy);
-    if (!SOLID.has(n)) return n;
-  }
-  return T.Floor;
-}
-
 function hexRgb(hex: string): string {
   const n = parseInt(hex.slice(1, 7), 16);
   return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
 }
+
+function groundAt(map: FloorMap, x: number, y: number): Ground | null {
+  for (const g of map.grounds) {
+    const r = g.rect;
+    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return g.ground;
+  }
+  return null;
+}
+
+const COUNTER_ITEMS = ["plain", "coffee", "sink", "fridge"] as const;
 
 /** Everything that never moves. Cached per company theme. */
 function staticLayer(map: FloorMap, floor: FloorId): HTMLCanvasElement {
@@ -55,33 +45,21 @@ function staticLayer(map: FloorMap, floor: FloorId): HTMLCanvasElement {
   c.width = WORLD_W;
   c.height = WORLD_H;
   const ctx = c.getContext("2d")!;
+  const isWall = (x: number, y: number) => {
+    const t = tileAt(map, x, y);
+    return t === T.Wall || t === T.WallFace || t === T.Board;
+  };
 
-  // Floor, with faint grout lines.
+  // 1. Floor finish everywhere, so doorways and wall edges sit on the right floor.
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
-      const g = GROUND[groundUnder(map, x, y)] ?? theme.floor;
-      px(ctx, x * TILE, y * TILE, TILE, TILE, (x + y) % 2 ? g[0] : g[1]);
-      px(ctx, x * TILE, y * TILE, TILE, 1, "rgba(255,255,255,0.025)");
+      const g = groundAt(map, x, y);
+      if (g) ground(ctx, g, x, y, theme);
+      else px(ctx, x * TILE, y * TILE, TILE, TILE, (x + y) % 2 ? theme.floor[0] : theme.floor[1]);
     }
   }
 
-  // The pit: a darker disc ringed in gold, like the post ring on the NYSE floor.
-  const { x: cx, y: cy } = map.pitCenter;
-  const rx = 7.4 * TILE;
-  const ry = 6.1 * TILE;
-  for (let y = Math.floor(cy - ry); y <= cy + ry; y++) {
-    for (let x = Math.floor(cx - rx); x <= cx + rx; x++) {
-      const d = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
-      if (d > 1) continue;
-      if (d < 0.86) {
-        ctx.fillStyle = ((x >> 3) + (y >> 3)) % 2 ? "rgba(6,9,16,0.28)" : "rgba(6,9,16,0.36)";
-      } else {
-        ctx.fillStyle = d > 0.93 ? "#e7c063" : "#a97b28";
-      }
-      ctx.fillRect(x, y, 1, 1);
-    }
-  }
-
+  // 2. Walls and doors.
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       const X = x * TILE;
@@ -93,96 +71,75 @@ function staticLayer(map: FloorMap, floor: FloorId): HTMLCanvasElement {
             px(ctx, X, Y, TILE, TILE, "#03050a");
             px(ctx, X, Y + TILE - 2, TILE, 2, theme.accent + "66");
             for (let i = 1; i < TILE; i += 3) px(ctx, X + i, Y + 2, 1, 1, "#0d1420");
-          } else {
-            px(ctx, X, Y, TILE, TILE, theme.wall);
-            px(ctx, X, Y, TILE, 3, theme.wallTop);
-            px(ctx, X, Y + TILE - 2, TILE, 2, "#06080d");
-          }
+          } else if (H_WALL_ROWS.includes(y)) wallSouth(ctx, X, Y, theme);
+          else wallCap(ctx, X, Y);
           break;
-        case T.Glass: {
-          const n = (dx: number, dy: number) => {
-            const t = tileAt(map, x + dx, y + dy);
-            return t === T.Glass || t === T.Door;
-          };
-          const horiz = n(-1, 0) || n(1, 0);
-          ctx.fillStyle = "rgba(125,211,252,0.16)";
-          if (horiz) {
-            ctx.fillRect(X, Y + 6, TILE, 5);
-            px(ctx, X, Y + 6, TILE, 1, "rgba(186,230,253,0.6)");
-            px(ctx, X, Y + 10, TILE, 1, "rgba(15,23,42,0.6)");
-            if (x % 4 === 0) px(ctx, X, Y + 5, 2, 7, "#64748b");
-          } else {
-            ctx.fillRect(X + 6, Y, 5, TILE);
-            px(ctx, X + 6, Y, 1, TILE, "rgba(186,230,253,0.6)");
-            px(ctx, X + 10, Y, 1, TILE, "rgba(15,23,42,0.6)");
-            if (y % 4 === 0) px(ctx, X + 5, Y, 7, 2, "#64748b");
-          }
-          break;
-        }
-        case T.Door:
-          if (y === MAP_H - 1) {
-            px(ctx, X, Y, TILE, TILE, "#0b0f16");
-            px(ctx, X + 1, Y + 2, TILE - 2, 3, theme.accent + "88");
-          }
-          break;
+        case T.WallFace:
         case T.Board:
-          px(ctx, X, Y, TILE, TILE, "#03060b");
-          px(ctx, X, Y, TILE, 1, "#334155");
-          px(ctx, X, Y + TILE - 1, TILE, 1, "#334155");
-          if (x % 4 === 0) px(ctx, X, Y, 1, TILE, "#111827"); // panel seams
+          wallFace(ctx, X, Y, y === 1 ? "upper" : y === 2 ? "lower" : "single", theme);
           break;
-        case T.Post:
-          px(ctx, X, Y, TILE, TILE, "#0a0d14");
-          px(ctx, X, Y, TILE, 2, "#1f2937");
-          break;
-        case T.Plant:
-          px(ctx, X + 3, Y + 9, 10, 6, "#3f2a1d");
-          px(ctx, X + 3, Y + 9, 10, 1, "#6b4a33");
-          for (const [lx, ly, s, col] of [[2, 3, 6, "#1f7a41"], [8, 2, 6, "#238a49"], [5, 0, 6, "#2fa35a"], [1, 6, 5, "#1b6b39"], [10, 6, 5, "#1b6b39"]] as const) {
-            px(ctx, X + lx, Y + ly, s, s - 1, col);
-          }
-          px(ctx, X + 7, Y + 2, 2, 2, "#7ee2a0");
-          break;
-        case T.Table:
-          px(ctx, X, Y, TILE, TILE, "#5b3f2c");
-          px(ctx, X, Y, TILE, 2, "#7d5a40");
-          if ((x + y) % 2 === 0) { px(ctx, X + 4, Y + 5, 8, 5, "#cbd5e1"); px(ctx, X + 5, Y + 6, 6, 3, "#38bdf8"); } // laptops
-          break;
-        case T.Counter:
-          px(ctx, X, Y, TILE, TILE, "#8b95a1");
-          px(ctx, X, Y, TILE, 3, "#cbd3dc");
-          if (x === 31) { px(ctx, X + 3, Y - 7, 10, 10, "#1f2328"); px(ctx, X + 5, Y - 5, 6, 2, "#ef4444"); px(ctx, X + 6, Y - 1, 4, 3, "#f8fafc"); }
-          if (x === 36) { px(ctx, X + 2, Y - 10, 12, 13, "#e2e8f0"); px(ctx, X + 2, Y - 4, 12, 1, "#94a3b8"); }
-          break;
-        case T.Sofa:
-          px(ctx, X, Y + 2, TILE, 12, "#6d28d9");
-          px(ctx, X, Y + 2, TILE, 4, "#5b21b6");
-          px(ctx, X + 1, Y + 7, TILE - 2, 5, "#8b5cf6");
+        case T.Door:
+          if (y === MAP_H - 1) exitDoor(ctx, X, Y, theme.accent);
+          else doorway(ctx, X, Y, isWall(x - 1, y), isWall(x + 1, y), y === 15);
           break;
       }
     }
   }
 
-  // Desks: two monitors on the far side, keyboard, and an office chair on the seat.
-  for (const spot of Object.values(map.desks)) {
-    const X = spot.desk.x * TILE;
-    const Y = spot.desk.y * TILE;
-    const S = { x: spot.seat.x * TILE, y: spot.seat.y * TILE };
-    px(ctx, S.x + 4, S.y + 4, 8, 8, "#1c2230");
-    px(ctx, S.x + 5, S.y + 5, 6, 6, "#273041");
-    if (spot.facing === 1 || spot.facing === 2) {
-      px(ctx, X + 2, Y - 3, 12, 22, "#3e3128");
-      px(ctx, X + 2, Y - 3, 12, 2, "#5e4a3b");
-      const mx = spot.facing === 2 ? X + 10 : X + 3;
-      px(ctx, mx, Y - 1, 3, 8, "#07090d");
-      px(ctx, mx, Y + 8, 3, 8, "#07090d");
-    } else {
-      px(ctx, X - 3, Y + 2, 22, 12, "#3e3128");
-      px(ctx, X - 3, Y + 2, 22, 2, "#5e4a3b");
-      const my = spot.facing === 3 ? Y + 1 : Y + 11;
-      px(ctx, X - 1, my, 8, 4, "#07090d");
-      px(ctx, X + 8, my, 8, 4, "#07090d");
-      px(ctx, X + 4, spot.facing === 3 ? Y + 8 : Y + 6, 8, 2, "#9aa4b2");
+  // Things on the back walls: the video wall, screens, clocks, windows.
+  const board = map.zones.find((z) => z.id === "board")!.rect;
+  px(ctx, board.x * TILE - 2, board.y * TILE + 1, board.w * TILE + 4, board.h * TILE - 1, "#05070b");
+  px(ctx, board.x * TILE - 2, board.y * TILE + 1, board.w * TILE + 4, 1, "#2b2f37");
+  px(ctx, board.x * TILE, board.y * TILE + 3, board.w * TILE, board.h * TILE - 5, "#03060b");
+  for (let i = 1; i < board.w; i++) px(ctx, (board.x + i) * TILE, board.y * TILE + 3, 1, board.h * TILE - 5, "#0d1320");
+  for (const d of map.decor) decor(ctx, d);
+  for (const s of map.wallScreens) wallScreenFrame(ctx, s.x, s.y, s.w, s.h);
+
+  // 3. Furniture, row by row, so tall props overlap the row behind them.
+  const deskAt = new Set(Object.values(map.desks).map((d) => `${d.desk.x},${d.desk.y}`));
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      const X = x * TILE;
+      const Y = y * TILE;
+      switch (tileAt(map, x, y)) {
+        case T.Plant:
+          plant(ctx, X, Y, x + y);
+          break;
+        case T.Shelf:
+          shelf(ctx, X, Y, y < 12, x * 31 + y);
+          break;
+        case T.Server:
+          server(ctx, X, Y);
+          break;
+        case T.Lamp:
+          floorLamp(ctx, X, Y);
+          break;
+        case T.Sofa:
+          sofa(ctx, X, Y, tileAt(map, x - 1, y) !== T.Sofa, tileAt(map, x + 1, y) !== T.Sofa);
+          break;
+        case T.Counter: {
+          let i = 0;
+          while (tileAt(map, x - i - 1, y) === T.Counter) i++;
+          counter(ctx, X, Y, COUNTER_ITEMS[Math.min(i, COUNTER_ITEMS.length - 1)]);
+          break;
+        }
+        case T.Table:
+          table(ctx, X, Y, tileAt(map, x, y + 1) !== T.Table, (x + y) % 2 === 0);
+          break;
+        case T.Desk:
+          if (deskAt.has(`${x},${y}`)) desk(ctx, X, Y);
+          break;
+        case T.Post:
+          if (x === map.post.x && y === map.post.y) {
+            const P = map.post;
+            hub(ctx, P.x * TILE, P.y * TILE, P.w * TILE, P.h * TILE, theme.accent);
+            for (const r of hubScreens(P.x * TILE, P.y * TILE, P.w * TILE)) {
+              px(ctx, r.x - 1, r.y - 1, r.w + 2, r.h + 2, "#0b0d11");
+              px(ctx, r.x + r.w / 2 - 1, r.y + r.h + 1, 2, 2, "#2a2d33");
+            }
+          }
+          break;
+      }
     }
   }
 
@@ -196,15 +153,25 @@ const SCREEN: Record<string, string[]> = {
   risk: ["#f472b6", "#e879f9", "#f9a8d4"],
 };
 
-/** A small glowing screen with a moving chart line across it. */
+const OFF = "#0b0f16";
+
+/** A small screen with a live chart line moving across it; `OFF` when nobody's there. */
 function screen(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string, t: number, seed: number) {
-  px(ctx, x, y, w, h, color);
-  ctx.fillStyle = "rgba(3,6,12,0.75)";
-  const n = Math.max(w, h);
-  for (let i = 0; i < n; i++) {
-    const v = Math.sin(t * 1.6 + i * 0.8 + seed) * 0.5 + 0.5;
-    if (w >= h) ctx.fillRect(x + i, y + Math.round(v * (h - 1)), 1, 1);
-    else ctx.fillRect(x + Math.round(v * (w - 1)), y + i, 1, 1);
+  if (color === OFF) {
+    px(ctx, x, y, w, h, OFF);
+    px(ctx, x, y, w, 1, "#161c27");
+    return;
+  }
+  px(ctx, x, y, w, h, "#07101d");
+  px(ctx, x, y + Math.floor(h / 2), w, 1, "rgba(148,163,184,0.12)");
+  ctx.fillStyle = color;
+  for (let i = 0; i < w; i++) {
+    const v = Math.sin(t * 1.6 + i * 0.8 + seed) * 0.35 + Math.sin(i * 0.31 + seed * 1.7 + t * 0.4) * 0.15 + 0.5;
+    const yy = y + Math.round((1 - v) * (h - 1));
+    ctx.fillRect(x + i, yy, 1, 1);
+    ctx.globalAlpha = 0.25;
+    ctx.fillRect(x + i, yy + 1, 1, y + h - yy - 1);
+    ctx.globalAlpha = 1;
   }
 }
 
@@ -233,31 +200,31 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
   for (const [role, spot] of Object.entries(w.map.desks) as Array<[RoleId, FloorMap["desks"][RoleId]]>) {
     const on = !w.byRole[role].hidden;
     const pal = SCREEN[ROLE_BY_ID[role].dept];
-    const X = spot.desk.x * TILE;
-    const Y = spot.desk.y * TILE;
-    const col = (k: number) => (!on ? "#111722" : flash ? "#ef4444" : pal[(k + Math.floor(t / 3)) % pal.length]);
-    if (spot.facing === 1 || spot.facing === 2) {
-      const mx = (spot.facing === 2 ? X + 10 : X + 3) + (spot.facing === 2 ? 0 : 1);
-      screen(ctx, mx, Y, 2, 6, col(0), t, X);
-      screen(ctx, mx, Y + 9, 2, 6, col(1), t, X + 3);
-    } else {
-      const my = spot.facing === 3 ? Y + 1 : Y + 12;
-      screen(ctx, X, my, 6, 2, col(0), t, Y);
-      screen(ctx, X + 9, my, 6, 2, col(1), t, Y + 3);
-    }
+    const col = (k: number) => (!on ? OFF : flash ? "#ef4444" : pal[(k + Math.floor(t / 3)) % pal.length]);
+    deskScreens(spot.desk.x * TILE, spot.desk.y * TILE).forEach((r, k) => screen(ctx, r.x, r.y, r.w, r.h, col(k), t, spot.desk.x + k * 3));
   }
 
-  // The centre post: screens on every face.
+  // The trading hub's monitors.
   const p = w.map.post;
-  for (let i = 0; i < p.w; i++) {
-    const X = (p.x + i) * TILE;
-    screen(ctx, X + 2, p.y * TILE + 3, 12, 6, flash ? "#ef4444" : i % 2 ? theme.accent : "#38bdf8", t, i);
-    screen(ctx, X + 2, (p.y + p.h) * TILE - 9, 12, 6, flash ? "#ef4444" : i % 2 ? "#22c55e" : theme.accent, t, i + 9);
+  hubScreens(p.x * TILE, p.y * TILE, p.w * TILE).forEach((r, i) =>
+    screen(ctx, r.x, r.y, r.w, r.h, flash ? "#ef4444" : night ? OFF : i % 2 ? theme.accent : "#38bdf8", t, i * 5)
+  );
+
+  // Wall screens: research charts and the drawdown monitor.
+  for (const [i, s] of w.map.wallScreens.entries()) {
+    const color = flash ? "#ef4444" : s.kind === "risk" ? (w.riskAlarm ? "#ef4444" : "#22c55e") : SCREEN.research[i % 3];
+    screen(ctx, s.x, s.y, s.w, s.h, night && s.kind === "charts" ? OFF : color, t * (s.kind === "risk" ? 0.5 : 1), i * 7);
   }
-  for (let j = 0; j < p.h; j++) {
-    const Y = (p.y + j) * TILE;
-    screen(ctx, p.x * TILE + 2, Y + 3, 4, 10, "#22c55e", t, j + 4);
-    screen(ctx, (p.x + p.w) * TILE - 6, Y + 3, 4, 10, "#f472b6", t, j + 7);
+
+  // Server LEDs, blinking.
+  for (let y = 0; y < w.map.h; y++) {
+    for (let x = 0; x < w.map.w; x++) {
+      if (tileAt(w.map, x, y) !== T.Server) continue;
+      for (const [k, led] of serverLeds(x * TILE, y * TILE).entries()) {
+        const blink = Math.sin(t * (3 + (k % 5)) + x * 1.7 + y + k * 2.3) > 0.2;
+        px(ctx, led.x, led.y, 1, 1, blink ? (k % 7 === 3 ? "#f59e0b" : "#22c55e") : "#14361f");
+      }
+    }
   }
 
   // Chart strip along the bottom of the video wall, trending with the lead market.
@@ -275,7 +242,7 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
   if (!night) for (const l of w.map.lamps) glow(ctx, l.x, l.y, l.r, "255,226,170", 0.07);
   for (const [role, spot] of Object.entries(w.map.desks) as Array<[RoleId, FloorMap["desks"][RoleId]]>) {
     if (w.byRole[role].hidden) continue;
-    glow(ctx, spot.desk.x * TILE + 8, spot.desk.y * TILE + 8, 18, flash ? "239,68,68" : "56,189,248", night ? 0.16 : 0.07);
+    glow(ctx, spot.desk.x * TILE + 8, spot.desk.y * TILE, 24, flash ? "239,68,68" : "56,189,248", night ? 0.16 : 0.07);
   }
   glow(ctx, w.map.pitCenter.x, w.map.pitCenter.y, 46, hexRgb(theme.accent), 0.12 + 0.04 * Math.sin(t * 2));
   ctx.restore();
@@ -333,8 +300,14 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
     ctx.strokeRect(Math.round(target.x) - 8.5, Math.round(target.y) - 8.5, 17, 17);
   }
 
-  // People (and Kimi), back to front, with a ring under the highlighted one.
+  // People (and Kimi) and the chairs they sit in, back to front, with a ring
+  // under the highlighted one. A chair sorts just after whoever sits in it.
   type Drawable = { y: number; draw: () => void };
+  const chairs: Drawable[] = Object.values(w.map.desks).map((d) => {
+    const cx = d.seat.x * TILE + 8;
+    const cy = d.seat.y * TILE + 8;
+    return { y: cy + 0.5, draw: () => chair(ctx, cx, cy) };
+  });
   const list: Drawable[] = w.agents
     .filter((a) => !a.hidden)
     .map((a) => ({
@@ -351,6 +324,7 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
         drawPerson(ctx, a);
       },
     }));
+  list.push(...chairs);
   if (player) {
     list.push({
       y: player.py,
@@ -362,9 +336,9 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
         ctx.stroke();
         const sprite = playerSprite(player.dir, player.moving ? Math.floor(player.walkT * 8) : 0);
         const x = Math.round(player.px - SPRITE_W / 2);
-        const y = Math.round(player.py - SPRITE_H + 3);
+        const y = Math.round(player.py - STAND);
         ctx.fillStyle = "rgba(0,0,0,0.3)";
-        ctx.fillRect(x + 2, Math.round(player.py) + 1, 6, 2);
+        ctx.fillRect(x + 3, Math.round(player.py) + 1, 6, 2);
         ctx.drawImage(sprite, x, y);
       },
     });
@@ -410,21 +384,29 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
   }
 }
 
+// Sprite top relative to the feet: standing, and seated with the shoulders
+// just above the chair back.
+const STAND = 17;
+const SIT = 17;
+
 function drawPerson(ctx: CanvasRenderingContext2D, a: Agent) {
   const frame = a.state === "walking" ? Math.floor(a.walkT * 8) % 4 : 0;
   const sprite = personSprite(a.role, a.dir, frame);
   const x = Math.round(a.px - SPRITE_W / 2);
   const seated = a.state === "seated";
   const bob = seated && Math.floor(a.walkT * 3) % 2 ? 1 : 0; // typing
-  const y = Math.round(a.py - SPRITE_H + (seated ? 2 + bob : 3));
+  const y = Math.round(a.py - (seated ? SIT - bob : STAND));
+  if (seated) {
+    ctx.drawImage(sprite, 0, 0, SPRITE_W, SEATED_ROWS, x, y, SPRITE_W, SEATED_ROWS);
+    return;
+  }
   ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.fillRect(x + 2, Math.round(a.py) + 1, 6, 2);
-  if (seated) ctx.drawImage(sprite, 0, 0, SPRITE_W, 11, x, y, SPRITE_W, 11);
-  else ctx.drawImage(sprite, x, y);
+  ctx.fillRect(x + 3, Math.round(a.py) + 1, 6, 2);
+  ctx.drawImage(sprite, x, y);
   if (a.carrying) {
-    px(ctx, x + 7, y + 6, 4, 5, "#f8fafc");
-    px(ctx, x + 8, y + 7, 2, 1, "#94a3b8");
-    px(ctx, x + 8, y + 9, 2, 1, "#94a3b8");
+    px(ctx, x + 9, y + 10, 4, 5, "#f8fafc");
+    px(ctx, x + 10, y + 11, 2, 1, "#94a3b8");
+    px(ctx, x + 10, y + 13, 2, 1, "#94a3b8");
   }
 }
 
@@ -564,7 +546,7 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, fl
   const zoneF = fs(4.6, 8, 12);
   for (const z of w.map.zones) {
     if (z.id === "board") continue;
-    const p = toScreen(v, z.rect.x * TILE + 2, z.rect.y * TILE + (z.id === "research" ? 3 : 2));
+    const p = toScreen(v, z.rect.x * TILE + 3, z.rect.y * TILE + 2);
     const alarm = z.id === "risk" && w.riskAlarm;
     const label = z.name.toUpperCase();
     ctx.font = `${zoneF}px ${pixel}`;

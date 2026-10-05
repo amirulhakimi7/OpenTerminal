@@ -97,7 +97,7 @@ export type Interactable =
 export function fixtures(map: FloorMap) {
   return {
     bell: { x: map.pitCenter.x, y: 3 * TILE + 8 },
-    coffee: { x: 31 * TILE + 8, y: 21 * TILE + 8 },
+    coffee: { x: 27 * TILE + 8, y: 17 * TILE + 4 }, // the machine on the pantry counter
     wall: { x: map.pitCenter.x, y: 2.5 * TILE },
   };
 }
