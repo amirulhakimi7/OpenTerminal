@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { carYFor, FLOOR_BAND, floorAtPoint } from "./building";
 import { diffSnapshots, warRoomEvents } from "./events";
 import { findPath } from "./pathfind";
 import { createPlayer, drinkCoffee, fixtures, nearestInteractable, stepPlayer, walkTo } from "./player";
@@ -491,5 +492,25 @@ describe("desk widgets", () => {
       portfolio_manager: "portfolio", risk_manager: "risk",
     };
     expect(Object.fromEntries(ROLES.map((r) => [r.id, r.opens]))).toEqual(want);
+  });
+});
+
+describe("Kimi Tower street view", () => {
+  it("rides up from a floor's band or from its label to the left", () => {
+    for (const f of ["futures", "crypto", "equity"] as const) {
+      const y = (FLOOR_BAND[f].y0 + FLOOR_BAND[f].y1) / 2;
+      expect(floorAtPoint(200, y)).toBe(f); // on the tower
+      expect(floorAtPoint(150, y)).toBe(f); // on its label
+    }
+    expect(floorAtPoint(10, 70)).toBeNull(); // Merdeka 118, far left
+    expect(floorAtPoint(270, 70)).toBeNull(); // KLCC
+    expect(floorAtPoint(200, 30)).toBeNull(); // above the floors
+  });
+
+  it("parks the elevator car inside each floor's band", () => {
+    for (const f of ["futures", "crypto", "equity"] as const) {
+      expect(carYFor(f)).toBeGreaterThanOrEqual(FLOOR_BAND[f].y0);
+      expect(carYFor(f) + 10).toBeLessThanOrEqual(FLOOR_BAND[f].y1);
+    }
   });
 });
