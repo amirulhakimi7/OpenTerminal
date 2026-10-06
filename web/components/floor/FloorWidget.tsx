@@ -10,13 +10,15 @@ import { marketStateNY } from "../../lib/markets";
 import { useRisk, useSessionPnl } from "../../lib/risk";
 import { useCmeSessionQuery } from "../../lib/session";
 import { useSignals } from "../../lib/signals";
-import { useTerminal, type WidgetInstance } from "../../store/terminal";
+import { useTerminal, type BrokerId, type WidgetInstance, type WidgetType } from "../../store/terminal";
+import { SymbolSearch } from "../SymbolSearch";
+import { TITLES, WidgetBody } from "../WidgetBody";
 import { diffSnapshots, warRoomEvents, type FloorEvent } from "./events";
 import { B_H, B_W, carYFor, FLOOR_BAND, drawBuilding, drawBuildingOverlay, floorAtPoint, type BuildingState, type FloorStatus } from "./building";
 import { play, unlockAudio, type Sfx } from "../../lib/sfx";
 import { FLOOR_ORDER, FLOORS, type FloorId } from "./floors";
 import { drawOverlay, drawWorld, hitTest, WORLD_H, WORLD_W, zoneAt, type View } from "./render";
-import { DEPARTMENTS, ROLE_BY_ID, type RoleId } from "./roster";
+import { DEPARTMENTS, ROLES, ROLE_BY_ID, type RoleId } from "./roster";
 import { applyEvent, createWorld, faceVisitor, ringBell, step, type World } from "./sim";
 import { createPlayer, drinkCoffee, nearestInteractable, stepPlayer, walkTo, type Interactable, type Player } from "./player";
 import { personSprite } from "./sprites";
@@ -216,6 +218,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     target: null as Interactable | null,
     follow: false, // when zoomed in, the camera pans to keep Kimi in view
     dialogOpen: false,
+    popupOpen: false,
   });
   live.current.mode = mode;
   live.current.sound = sound;
@@ -233,7 +236,12 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
   const [typed, setTyped] = useState(0); // characters of the dialog revealed so far
   const [energy, setEnergy] = useState(80);
   const [toast, setToast] = useState<string | null>(null);
-  live.current.dialogOpen = dialog !== null;
+  // A desk's widget, popped up over the floor; `role` is whose desk it came from.
+  // `symbol`: a ticker picked inside the popup; null follows the dashboard's active symbol.
+  const [popup, setPopup] = useState<{ type: WidgetType; role: RoleId | null; symbol: string | null } | null>(null);
+  const activeSymbol = useTerminal((s) => s.activeSymbol);
+  live.current.dialogOpen = dialog !== null || popup !== null;
+  live.current.popupOpen = popup !== null;
   const feedId = useRef(0);
 
   /** Recompute the view from the fitted base and the camera, keeping the floor filling its frame. */
@@ -364,16 +372,23 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     const f = floor;
     const w = worldFor(f);
     const wasClosed = w.closed;
+    // A real risk block stays put: the demo only plays one when there isn't one.
+    const risk: Array<[number, FloorEvent]> = w.riskAlarm
+      ? []
+      : [[28000, { kind: "riskBlocked", text: "daily stop (demo)" }], [36000, { kind: "riskClear" }]];
     const steps: Array<[number, FloorEvent]> = [
       [0, { kind: "marketOpen" }],
-      [7000, { kind: "signal", text: "MCL LONG 69.90 RR 4.3" }],
-      [12000, { kind: "rally", text: "SPY +2.10%" }],
-      [18000, { kind: "warRoom", text: "USD CPI", at: Date.now() + 40_000 }],
-      [30000, { kind: "warRoomEnd" }],
-      [34000, { kind: "selloff", text: "SPY -2.40%" }],
-      [40000, { kind: "forceFlat" }],
-      [46000, { kind: "forceFlatEnd" }],
-      ...(wasClosed ? ([[50000, { kind: "marketClosed", bell: true }]] as Array<[number, FloorEvent]>) : []),
+      [6000, { kind: "headline", text: "Crude stocks draw more than expected (demo)" }],
+      [12000, { kind: "signal", text: "MCL LONG 69.90 RR 4.3" }],
+      [18000, { kind: "bigMover", text: "MCL +3.20%" }],
+      [23000, { kind: "rally", text: "SPY +2.10%" }],
+      ...risk,
+      [40000, { kind: "warRoom", text: "USD CPI", at: Date.now() + 52_000 }],
+      [52000, { kind: "warRoomEnd" }],
+      [56000, { kind: "selloff", text: "SPY -2.40%" }],
+      [62000, { kind: "forceFlat" }],
+      [68000, { kind: "forceFlatEnd" }],
+      ...(wasClosed ? ([[72000, { kind: "marketClosed", bell: true }]] as Array<[number, FloorEvent]>) : []),
     ];
     for (const [delay, ev] of steps) {
       setTimeout(() => {
@@ -473,7 +488,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
         const statuses: FloorStatus[] = FLOOR_ORDER.map((id) => {
           const open = id === "crypto" ? true : id === "equity" ? marketStateNY().open : L.futuresOpen;
           const wld = worlds.current.get(id);
-          return { id, open, onDuty: wld ? wld.agents.filter((a) => !a.hidden).length : open === false ? 1 : 18 };
+          return { id, open, onDuty: wld ? wld.agents.filter((a) => !a.hidden).length : open === false ? 1 : ROLES.length };
         });
         const local = new Date();
         drawBuilding(bctx, b, statuses, local.getHours() + local.getMinutes() / 60);
@@ -565,11 +580,14 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       if (MOVE_KEYS.has(key)) {
         live.current.keys.add(key);
         if (key.startsWith("Arrow")) e.preventDefault(); // don't scroll the page
+      } else if (key === "Escape") {
+        if (live.current.popupOpen) setPopup(null);
+        else closeDialog();
+      } else if (live.current.popupOpen) {
+        return; // the widget has the keyboard
       } else if (key === "e" || key === "Enter") {
         if (live.current.dialogOpen) closeDialog();
         else if (live.current.target) interact(live.current.target);
-      } else if (key === "Escape") {
-        closeDialog();
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -603,6 +621,12 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     setTyped(0);
     setDialog(d);
   };
+  /** Pop a widget up over the floor (from a desk, a person or the video wall). */
+  const openWidget = (type: WidgetType, role: RoleId | null = null) => {
+    closeDialog();
+    live.current.keys.clear();
+    setPopup({ type, role, symbol: null });
+  };
   const flash = (text: string) => {
     setToast(text);
     setTimeout(() => setToast((t) => (t === text ? null : t)), 2200);
@@ -615,16 +639,19 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     const s = live.current.snap;
     const pl = playerFor(f);
     const company = FLOORS[f].company;
-    if (t.kind === "person" || t.kind === "desk") {
+    if (t.kind === "desk") {
+      // A desk opens its widget straight away.
+      openWidget(ROLE_BY_ID[t.role].opens, t.role);
+    } else if (t.kind === "person") {
       const r = ROLE_BY_ID[t.role];
       const off = w.byRole[t.role].hidden;
-      if (t.kind === "person") faceVisitor(w, t.role, pl.px);
+      faceVisitor(w, t.role, pl.px);
       openDialog({
-        title: t.kind === "person" ? r.title : `${r.title}'s screens`,
+        title: `${r.name} · ${r.title}`,
         subtitle: `${DEPARTMENTS.find((d) => d.id === r.dept)?.name} · ${company}`,
-        lines: t.kind === "desk" && off ? ["Screens are locked — nobody's at this desk.", ...reportFor(t.role, s).slice(0, 1)] : reportFor(t.role, s, off && t.kind === "person"),
+        lines: reportFor(t.role, s, off),
         portrait: t.role,
-        actions: [{ label: `Open ${r.opens} widget`, run: () => addWidget(r.opens) }],
+        actions: [{ label: `Open ${TITLES[r.opens]}`, run: () => openWidget(r.opens, t.role) }],
       });
     } else if (t.kind === "bell") {
       ringBell(w);
@@ -642,7 +669,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
         subtitle: company,
         lines: s.board.length ? s.board.map((b) => `${b.label} ${b.value}${b.changePct == null ? "" : ` ${b.changePct >= 0 ? "▲" : "▼"}${Math.abs(b.changePct).toFixed(2)}%`}`) : ["The wall is waiting for data."],
         portrait: null,
-        actions: [{ label: `Open ${target} widget`, run: () => addWidget(target) }],
+        actions: [{ label: `Open ${TITLES[target]}`, run: () => openWidget(target) }],
       });
     }
   };
@@ -792,7 +819,7 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
               {theme.company}
             </span>
             <span className={`pill ${status.cls}`}>● {status.text}</span>
-            <span className="pill" title="People on the floor right now">👥 {onFloor}/18</span>
+            <span className="pill" title="People on the floor right now">👥 {onFloor}/{ROLES.length}</span>
             {risk && <span className={`pill ${risk.cls}`}>{risk.text}</span>}
           </>
         )}
@@ -873,7 +900,8 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           >
             <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="text-[12px]" style={{ fontFamily: "var(--font-pixel)", color: theme.accent }}>{role.title}</div>
+                <div className="text-[13px]" style={{ fontFamily: "var(--font-pixel)", color: theme.accent }}>{role.name}</div>
+                <div className="text-[12px]">{role.title}</div>
                 <div className="dim text-[11px] mt-0.5">
                   {DEPARTMENTS.find((d) => d.id === role.dept)?.name} · {theme.company}
                 </div>
@@ -887,8 +915,8 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
             <div className="mt-2 text-[11px] dim">
               {agent?.hidden ? "Off duty" : agent?.state === "walking" ? "On the move" : agent?.state === "seated" ? "At desk" : "Away from desk"}
             </div>
-            <button className="term-btn active w-full mt-3" onClick={() => addWidget(role.opens)}>
-              Open {role.opens} widget
+            <button className="term-btn active w-full mt-3" onClick={() => openWidget(role.opens, role.id)}>
+              Open {TITLES[role.opens]}
             </button>
           </div>
         )}
@@ -968,6 +996,50 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
         )}
 
         {/* RPG dialog box. */}
+        {/* A desk's widget, popped up over the floor. Click outside, ✕ or Esc to close. */}
+        {mode === "floor" && popup && (
+          <div
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/55 backdrop-blur-[2px] p-3"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setPopup(null);
+            }}
+          >
+            <div className="terminal-panel flex flex-col w-full max-w-[1000px] h-full max-h-[700px] shadow-2xl" role="dialog" aria-label={TITLES[popup.type]}>
+              <div className="panel-title">
+                <span className="flex items-center gap-2 min-w-0">
+                  {popup.role && (
+                    <span className="truncate" style={{ fontFamily: "var(--font-pixel)", color: theme.accent }}>
+                      {ROLE_BY_ID[popup.role].name} · {ROLE_BY_ID[popup.role].title}
+                    </span>
+                  )}
+                  <span className="truncate">{TITLES[popup.type]}</span>
+                </span>
+                <span className="flex gap-2 items-center shrink-0">
+                  {SYMBOL_AWARE.has(popup.type) && (
+                    <SymbolSearch symbol={popup.symbol ?? activeSymbol} onPick={(sym) => setPopup((p) => p && { ...p, symbol: sym })} />
+                  )}
+                  <button
+                    className="dim hover:text-[var(--amber)]"
+                    title="Keep this widget on the workspace too"
+                    onClick={() => {
+                      addWidget(popup.type, popup.symbol ?? undefined);
+                      flash(`📌 ${TITLES[popup.type]} pinned to the workspace`);
+                    }}
+                  >
+                    📌 Pin
+                  </button>
+                  <button className="dim hover:text-[var(--down)]" title="Close (Esc)" onClick={() => setPopup(null)}>
+                    ✕
+                  </button>
+                </span>
+              </div>
+              <div className="flex-1 overflow-auto min-h-0">
+                <WidgetBody widget={popupWidget(popup.type, floor, popup.symbol)} />
+              </div>
+            </div>
+          </div>
+        )}
+
         {mode === "floor" && dialog && (
           <div
             className="absolute rounded-lg border-2 border-amber-400/70 bg-[#05070c]/95 shadow-2xl p-3 flex gap-3"
@@ -1045,4 +1117,20 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
 
     </div>
   );
+}
+
+// The broker each floor trades through, so its Broker Accounts popup shows that account.
+const FLOOR_BROKER: Record<FloorId, BrokerId> = { equity: "moomoo", crypto: "hata", futures: "lucid" };
+
+// Widgets that show one ticker, and so get a symbol search in their popup.
+const SYMBOL_AWARE = new Set<WidgetType>(["chart", "quote", "news", "options", "insider"]);
+
+function popupWidget(type: WidgetType, floor: FloorId, symbol: string | null): WidgetInstance {
+  return {
+    id: `floor-popup-${type}`,
+    type,
+    symbol: symbol ?? undefined,
+    linked: symbol == null, // a ticker picked here sticks to this popup
+    broker: type === "accounts" ? FLOOR_BROKER[floor] : undefined,
+  };
 }

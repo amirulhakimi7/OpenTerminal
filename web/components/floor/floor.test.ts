@@ -3,7 +3,7 @@ import { diffSnapshots, warRoomEvents } from "./events";
 import { findPath } from "./pathfind";
 import { createPlayer, drinkCoffee, fixtures, nearestInteractable, stepPlayer, walkTo } from "./player";
 import { ROLES } from "./roster";
-import { SPRITE_H, SPRITE_W, spriteRows } from "./sprites";
+import { iconRows, SPRITE_H, SPRITE_W, spriteRows } from "./sprites";
 import { applyEvent, createWorld, step } from "./sim";
 import { cryptoSnapshot, equitySnapshot, factFor, futuresSnapshot, nextEconEvent, reportFor, type FloorSnapshot } from "./snapshot";
 import { buildFloor, walkable } from "./tilemap";
@@ -28,10 +28,10 @@ const base = (over: Partial<FloorSnapshot> = {}): FloorSnapshot => ({
 });
 
 describe("floor plan", () => {
-  it("seats all 18 roles at distinct, walkable seats", () => {
+  it("seats all 17 roles at distinct, walkable seats", () => {
     const seats = ROLES.map((r) => MAP.desks[r.id].seat);
-    expect(seats).toHaveLength(18);
-    expect(new Set(seats.map((s) => `${s.x},${s.y}`)).size).toBe(18);
+    expect(seats).toHaveLength(17);
+    expect(new Set(seats.map((s) => `${s.x},${s.y}`)).size).toBe(17);
     for (const s of seats) expect(walkable(MAP, s.x, s.y)).toBe(true);
   });
 
@@ -400,5 +400,96 @@ describe("sprites", () => {
         }
       }
     }
+  });
+});
+
+describe("roster", () => {
+  it("gives everyone a workstation and a unique name", () => {
+    for (const r of ROLES) {
+      expect(r.station, r.id).toBeTruthy();
+      expect(r.name.length, r.id).toBeGreaterThan(1);
+    }
+    expect(new Set(ROLES.map((r) => r.name)).size).toBe(ROLES.length);
+  });
+
+  it("draws every status icon on a 7x7 grid", () => {
+    for (const icon of ["alert", "risk", "news", "idea", "phone", "setup", "calendar"] as const) {
+      const rows = iconRows(icon);
+      expect(rows).toHaveLength(7);
+      for (const r of rows) expect(r.length, icon).toBe(7);
+    }
+  });
+});
+
+describe("staff reactions", () => {
+  const snap = base();
+
+  it("puts a setup on the strategy and trading screens, pointing the right way, then lets it go", () => {
+    const w = createWorld(MAP, 5);
+    applyEvent(w, { kind: "signal", text: "MCL SHORT 70.10 RR 3.0" });
+    expect(w.byRole.strategy_analyst.screen).toMatchObject({ mode: "setup", label: "SHORT" });
+    expect(w.byRole.trade_analyst.screen).toMatchObject({ mode: "setup", label: "SHORT" });
+    expect(w.byRole.strategy_analyst.status?.icon).toBe("idea");
+    for (let i = 0; i < 200; i++) step(w, 0.1, snap);
+    expect(w.byRole.trade_analyst.screen).toBeNull();
+    expect(w.byRole.strategy_analyst.status).toBeNull();
+  });
+
+  it("raises a risk alert that holds until the block clears", () => {
+    const w = createWorld(MAP, 5);
+    applyEvent(w, { kind: "riskBlocked", text: "daily stop" });
+    const rm = w.byRole.risk_manager;
+    expect(rm.status?.icon).toBe("risk");
+    expect(rm.standing).toBeGreaterThan(0); // up out of the chair before heading over
+    for (let i = 0; i < 300; i++) step(w, 0.1, snap);
+    expect(w.byRole.trade_analyst.screen?.mode).toBe("risk");
+    applyEvent(w, { kind: "riskClear" });
+    expect(w.byRole.trade_analyst.screen).toBeNull();
+    expect(rm.screen).toBeNull();
+  });
+
+  it("has the monitoring desk stand up for a big mover, then run it over", () => {
+    const w = createWorld(MAP, 5);
+    applyEvent(w, { kind: "bigMover", text: "MCL +3.20%" });
+    const a = w.byRole.monitoring_analyst;
+    expect(a.status?.icon).toBe("alert");
+    expect(a.standing).toBeGreaterThan(0);
+    for (let i = 0; i < 30; i++) step(w, 0.1, snap);
+    expect(a.state).toBe("walking");
+    expect(a.standing).toBe(0);
+  });
+
+  it("gives nobody an icon or a screen while they're off duty", () => {
+    const w = createWorld(MAP, 5);
+    w.byRole.news_analyst.hidden = true;
+    applyEvent(w, { kind: "headline", text: "Something happened" });
+    expect(w.byRole.news_analyst.status).toBeNull();
+    expect(w.byRole.news_analyst.screen).toBeNull();
+  });
+});
+
+describe("gathering", () => {
+  it("sends home anyone who reaches the board after FORCE FLAT is over", () => {
+    const w = createWorld(MAP, 9);
+    applyEvent(w, { kind: "forceFlat" });
+    for (let i = 0; i < 20; i++) step(w, 0.1, base()); // the call ends while people are still walking
+    applyEvent(w, { kind: "forceFlatEnd" });
+    for (let i = 0; i < 1200; i++) step(w, 0.1, base());
+    const stuck = w.agents.filter((a) => a.state === "talking" && a.timer === Infinity);
+    expect(stuck.map((a) => a.role)).toEqual([]);
+  });
+});
+
+describe("desk widgets", () => {
+  it("pops up the widget each desk is for", () => {
+    const want: Record<string, string> = {
+      broker_rm: "accounts", trade_analyst: "journal", strategy_analyst: "signals",
+      technical_analyst: "chart", market_data_analyst: "quote", monitoring_analyst: "watchlist",
+      equity_research_analyst: "screener", intelligence_analyst: "heatmap", news_analyst: "news",
+      economic_research_analyst: "calendar", macro_analyst: "macro", research_analyst: "recap",
+      institutional_research_analyst: "insider", broadcast_analyst: "tv", quant_researcher: "ai",
+      portfolio_manager: "portfolio", risk_manager: "risk",
+    };
+    expect(Object.fromEntries(ROLES.map((r) => [r.id, r.opens]))).toEqual(want);
   });
 });

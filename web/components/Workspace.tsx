@@ -5,53 +5,10 @@ import GridLayout, { WidthProvider } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { useTerminal, type WidgetInstance } from "../store/terminal";
-import QuoteWidget from "./widgets/QuoteWidget";
-import ChartWidget from "./widgets/ChartWidget";
-import WatchlistWidget from "./widgets/WatchlistWidget";
-import NewsWidget from "./widgets/NewsWidget";
-import HeatmapWidget from "./widgets/HeatmapWidget";
-import ScreenerWidget from "./widgets/ScreenerWidget";
-import CryptoWidget from "./widgets/CryptoWidget";
-import MacroWidget from "./widgets/MacroWidget";
-import OptionsWidget from "./widgets/OptionsWidget";
-import PortfolioWidget from "./widgets/PortfolioWidget";
-import AiWidget from "./widgets/AiWidget";
-import CalendarWidget from "./widgets/CalendarWidget";
-import InsiderWidget from "./widgets/InsiderWidget";
-import TvWidget from "./widgets/TvWidget";
-import RecapWidget from "./widgets/RecapWidget";
-import SignalsWidget from "./widgets/SignalsWidget";
-import RiskWidget from "./widgets/RiskWidget";
-import JournalWidget from "./widgets/JournalWidget";
-import AccountsWidget from "./widgets/AccountsWidget";
+import { BROKER_TITLES, TITLES, WidgetBody } from "./WidgetBody";
 import FloorWidget from "./floor/FloorWidget";
 
 const Grid = WidthProvider(GridLayout);
-
-function WidgetBody({ widget }: { widget: WidgetInstance }) {
-  switch (widget.type) {
-    case "quote": return <QuoteWidget widget={widget} />;
-    case "chart": return <ChartWidget widget={widget} />;
-    case "watchlist": return <WatchlistWidget />;
-    case "news": return <NewsWidget widget={widget} />;
-    case "heatmap": return <HeatmapWidget />;
-    case "screener": return <ScreenerWidget />;
-    case "crypto": return <CryptoWidget />;
-    case "macro": return <MacroWidget />;
-    case "options": return <OptionsWidget widget={widget} />;
-    case "portfolio": return <PortfolioWidget />;
-    case "ai": return <AiWidget />;
-    case "calendar": return <CalendarWidget />;
-    case "insider": return <InsiderWidget widget={widget} />;
-    case "tv": return <TvWidget />;
-    case "recap": return <RecapWidget />;
-    case "signals": return <SignalsWidget />;
-    case "risk": return <RiskWidget />;
-    case "journal": return <JournalWidget />;
-    case "accounts": return <AccountsWidget widget={widget} />;
-    case "floor": return <FloorWidget widget={widget} />;
-  }
-}
 
 function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSymbol: string }) {
   const setWidgetSymbol = useTerminal((s) => s.setWidgetSymbol);
@@ -98,16 +55,6 @@ function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSym
     </span>
   );
 }
-
-const BROKER_TITLES: Record<string, string> = { moomoo: "moomoo", hata: "Hata", lucid: "Lucid" };
-
-const TITLES: Record<string, string> = {
-  quote: "Quote", chart: "Chart", watchlist: "Watchlist", news: "News",
-  heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
-  macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
-  calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
-  signals: "CL / MCL Signals", risk: "LucidFlex Risk", journal: "Trade Journal", accounts: "Broker Accounts", floor: "Trading Floor",
-};
 
 export default function Workspace() {
   const widgets = useTerminal((s) => s.widgets);
@@ -170,7 +117,7 @@ export default function Workspace() {
         </span>
       </div>
       <div className="flex-1 overflow-auto min-h-0">
-        <WidgetBody widget={w} />
+        {w.type === "floor" ? <FloorWidget widget={w} /> : <WidgetBody widget={w} />}
       </div>
     </div>
   );

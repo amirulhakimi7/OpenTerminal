@@ -5,7 +5,7 @@
 // colour, three hairstyles so the floor isn't a row of clones.
 
 import { ROLES, ROLE_BY_ID, type RoleId } from "./roster";
-import type { Dir } from "./sim";
+import type { Dir, StatusIcon } from "./sim";
 
 export const SPRITE_W = 12;
 export const SPRITE_H = 20;
@@ -207,4 +207,72 @@ function sprite(id: string, lk: Look, dir: Dir, frame: number): HTMLCanvasElemen
   const out = paint(spriteRows(view, lk.hair, frame), lk.colors, dir === 1);
   cache.set(key, out);
   return out;
+}
+
+// ---- status icons -------------------------------------------------------------
+// Small pixel badges over someone's head, outlined so they read on any floor.
+
+export const ICON_SIZE = 9; // 7x7 badge plus a 1px outline
+
+const ICONS: Record<StatusIcon, { rows: string[]; colors: Record<string, string> }> = {
+  alert: {
+    rows: [".bbbbb.", "bbbwbbb", "bbbwbbb", "bbbwbbb", "bbbbbbb", "bbbwbbb", ".bbbbb."],
+    colors: { b: "#f59e0b", w: "#1f1300" },
+  },
+  risk: {
+    rows: [".bbbbb.", "bbbbbbb", "bbbbbbb", "bwwwwwb", "bbbbbbb", "bbbbbbb", ".bbbbb."],
+    colors: { b: "#ef4444", w: "#ffffff" },
+  },
+  news: {
+    rows: [".bbbbb.", "brrrrrb", "bbbbbbb", "bwwbwwb", "bbbbbbb", "bwwbwwb", ".bbbbb."],
+    colors: { b: "#f8fafc", w: "#475569", r: "#dc2626" },
+  },
+  idea: {
+    rows: ["..bbb..", ".bbbbb.", ".bbwbb.", ".bbbbb.", "..bbb..", "..www..", "..www.."],
+    colors: { b: "#facc15", w: "#94a3b8" },
+  },
+  phone: {
+    rows: [".bbbbb.", "bwwbwwb", "bwbbbwb", "bbbbbbb", "bbwwwbb", "bwwwwwb", ".bbbbb."],
+    colors: { b: "#38bdf8", w: "#ffffff" },
+  },
+  setup: {
+    rows: [".bbbbb.", "bbbwbbb", "bbwwwbb", "bwbwbwb", "bbbwbbb", "bbbwbbb", ".bbbbb."],
+    colors: { b: "#22c55e", w: "#ffffff" },
+  },
+  calendar: {
+    rows: [".rrrrr.", "rrrrrrr", "bbbbbbb", "bwbwbwb", "bbbbbbb", "bwbwbbb", ".bbbbb."],
+    colors: { b: "#f8fafc", w: "#334155", r: "#ef4444" },
+  },
+};
+
+/** The grid for a status icon, for tests. */
+export function iconRows(icon: StatusIcon): string[] {
+  return ICONS[icon].rows;
+}
+
+const iconCache = new Map<StatusIcon, HTMLCanvasElement>();
+
+export function statusIcon(icon: StatusIcon): HTMLCanvasElement {
+  const hit = iconCache.get(icon);
+  if (hit) return hit;
+  const { rows, colors } = ICONS[icon];
+  const c = document.createElement("canvas");
+  c.width = ICON_SIZE;
+  c.height = ICON_SIZE;
+  const ctx = c.getContext("2d")!;
+  const solid = (x: number, y: number) => rows[y]?.[x] !== undefined && rows[y][x] !== ".";
+  // Outline first: every empty pixel touching the badge.
+  ctx.fillStyle = "#0b0d12";
+  for (let y = -1; y <= 7; y++)
+    for (let x = -1; x <= 7; x++)
+      if (!solid(x, y) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => solid(x + dx, y + dy))) ctx.fillRect(x + 1, y + 1, 1, 1);
+  rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      if (row[x] === ".") continue;
+      ctx.fillStyle = colors[row[x]];
+      ctx.fillRect(x + 1, y + 1, 1, 1);
+    }
+  });
+  iconCache.set(icon, c);
+  return c;
 }

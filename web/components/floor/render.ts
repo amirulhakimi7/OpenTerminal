@@ -6,12 +6,14 @@
 
 import { FLOORS, type FloorId } from "./floors";
 import { ROLE_BY_ID, type RoleId } from "./roster";
-import { personSprite, playerSprite, SEATED_ROWS, SPRITE_H, SPRITE_W } from "./sprites";
+import { TITLES } from "../WidgetBody";
+import { chartLine, OFF, overrideScreen, stationScreen, type ScreenCtx } from "./screens";
+import { ICON_SIZE, personSprite, playerSprite, SEATED_ROWS, SPRITE_H, SPRITE_W, statusIcon } from "./sprites";
 import type { Interactable, Player } from "./player";
 import type { FloorSnapshot } from "./snapshot";
 import { H_WALL_ROWS, MAP_H, MAP_W, T, TILE, tileAt, type FloorMap, type Ground, type ZoneId } from "./tilemap";
 import {
-  chair, counter, decor, desk, deskScreens, doorway, exitDoor, floorLamp, ground, hub, hubScreens, plant, px,
+  chair, counter, decor, desk, deskProps, deskScreens, riskLight, doorway, exitDoor, floorLamp, ground, hub, hubScreens, plant, px,
   server, serverLeds, shelf, sofa, table, wallCap, wallFace, wallScreenFrame, wallSouth,
 } from "./furniture";
 import type { Agent, World } from "./sim";
@@ -96,7 +98,9 @@ function staticLayer(map: FloorMap, floor: FloorId): HTMLCanvasElement {
   for (const s of map.wallScreens) wallScreenFrame(ctx, s.x, s.y, s.w, s.h);
 
   // 3. Furniture, row by row, so tall props overlap the row behind them.
-  const deskAt = new Set(Object.values(map.desks).map((d) => `${d.desk.x},${d.desk.y}`));
+  const deskAt = new Map(
+    (Object.entries(map.desks) as Array<[RoleId, FloorMap["desks"][RoleId]]>).map(([role, d]) => [`${d.desk.x},${d.desk.y}`, role])
+  );
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       const X = x * TILE;
@@ -127,7 +131,10 @@ function staticLayer(map: FloorMap, floor: FloorId): HTMLCanvasElement {
           table(ctx, X, Y, tileAt(map, x, y + 1) !== T.Table, (x + y) % 2 === 0);
           break;
         case T.Desk:
-          if (deskAt.has(`${x},${y}`)) desk(ctx, X, Y);
+          if (deskAt.has(`${x},${y}`)) {
+            desk(ctx, X, Y);
+            deskProps(ctx, X, Y, ROLE_BY_ID[deskAt.get(`${x},${y}`)!].station);
+          }
           break;
         case T.Post:
           if (x === map.post.x && y === map.post.y) {
@@ -153,26 +160,9 @@ const SCREEN: Record<string, string[]> = {
   risk: ["#f472b6", "#e879f9", "#f9a8d4"],
 };
 
-const OFF = "#0b0f16";
-
-/** A small screen with a live chart line moving across it; `OFF` when nobody's there. */
+/** A screen with a moving chart line (see `chartLine`). */
 function screen(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string, t: number, seed: number) {
-  if (color === OFF) {
-    px(ctx, x, y, w, h, OFF);
-    px(ctx, x, y, w, 1, "#161c27");
-    return;
-  }
-  px(ctx, x, y, w, h, "#07101d");
-  px(ctx, x, y + Math.floor(h / 2), w, 1, "rgba(148,163,184,0.12)");
-  ctx.fillStyle = color;
-  for (let i = 0; i < w; i++) {
-    const v = Math.sin(t * 1.6 + i * 0.8 + seed) * 0.35 + Math.sin(i * 0.31 + seed * 1.7 + t * 0.4) * 0.15 + 0.5;
-    const yy = y + Math.round((1 - v) * (h - 1));
-    ctx.fillRect(x + i, yy, 1, 1);
-    ctx.globalAlpha = 0.25;
-    ctx.fillRect(x + i, yy + 1, 1, y + h - yy - 1);
-    ctx.globalAlpha = 1;
-  }
+  chartLine(ctx, { x, y, w, h }, color, t, seed);
 }
 
 function glow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, rgb: string, alpha: number) {
@@ -197,11 +187,34 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
 
   // Desk screens: live charts while someone's there; red when FORCE FLAT.
   const flash = w.alarm && Math.floor(t * 4) % 2 === 0;
+  // The middle (and any top) monitor shows the job; events take every screen over.
+  const sctx: ScreenCtx = {
+    t,
+    alarm: w.alarm,
+    riskAlarm: w.riskAlarm,
+    pnlUp: (snap.pnl?.value ?? 0) >= 0,
+    brokerLinked: snap.pnl != null,
+    moverHot: snap.bigMover != null,
+  };
   for (const [role, spot] of Object.entries(w.map.desks) as Array<[RoleId, FloorMap["desks"][RoleId]]>) {
-    const on = !w.byRole[role].hidden;
-    const pal = SCREEN[ROLE_BY_ID[role].dept];
-    const col = (k: number) => (!on ? OFF : flash ? "#ef4444" : pal[(k + Math.floor(t / 3)) % pal.length]);
-    deskScreens(spot.desk.x * TILE, spot.desk.y * TILE).forEach((r, k) => screen(ctx, r.x, r.y, r.w, r.h, col(k), t, spot.desk.x + k * 3));
+    const a = w.byRole[role];
+    const { dept, station } = ROLE_BY_ID[role];
+    const pal = SCREEN[dept];
+    const X = spot.desk.x * TILE;
+    const Y = spot.desk.y * TILE;
+    deskScreens(X, Y, station).forEach((r, k) => {
+      const seed = spot.desk.x + k * 3;
+      if (a.hidden) chartLine(ctx, r, OFF, t, seed);
+      else if (flash) chartLine(ctx, r, "#ef4444", t, seed);
+      else if (a.screen) overrideScreen(ctx, r, a.screen.mode, t, k, a.screen.label);
+      else if (k === 1 || k === 3) stationScreen(ctx, r, station, seed, sctx);
+      else chartLine(ctx, r, pal[(k + Math.floor(t / 3)) % pal.length], t, seed);
+    });
+    if (station === "risk") {
+      const l = riskLight(X, Y);
+      const lit = w.riskAlarm ? Math.floor(t * 4) % 2 === 0 : true;
+      px(ctx, l.x, l.y, 3, 3, w.riskAlarm ? (lit ? "#ef4444" : "#7f1d1d") : "#22c55e");
+    }
   }
 
   // The trading hub's monitors.
@@ -345,6 +358,14 @@ export function drawWorld(ctx: CanvasRenderingContext2D, w: World, floor: FloorI
   }
   list.sort((a, b) => a.y - b.y).forEach((d) => d.draw());
 
+  // Status icons over heads, on top of everything on the floor.
+  for (const a of w.agents) {
+    if (a.hidden || !a.status) continue;
+    const top = a.py - (a.state === "seated" ? (a.standing > 0 ? STAND + 3 : SIT) : STAND);
+    const bounce = Math.round(Math.abs(Math.sin(t * 5)) * 2);
+    ctx.drawImage(statusIcon(a.status.icon), Math.round(a.px - ICON_SIZE / 2), Math.round(top - ICON_SIZE - 1 - bounce));
+  }
+
   // The bell, swinging in front of the video wall during a ceremony.
   if (w.bell) {
     const bx = w.map.pitCenter.x;
@@ -394,6 +415,11 @@ function drawPerson(ctx: CanvasRenderingContext2D, a: Agent) {
   const sprite = personSprite(a.role, a.dir, frame);
   const x = Math.round(a.px - SPRITE_W / 2);
   const seated = a.state === "seated";
+  if (seated && a.standing > 0) {
+    // Up out of the chair, turned to the room: the chair still hides the legs.
+    ctx.drawImage(personSprite(a.role, 0, 0), x, Math.round(a.py - STAND - 3));
+    return;
+  }
   const bob = seated && Math.floor(a.walkT * 3) % 2 ? 1 : 0; // typing
   const y = Math.round(a.py - (seated ? SIT - bob : STAND));
   if (seated) {
@@ -587,14 +613,32 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, fl
     ctx.fillText(label, p.x, p.y + 1);
   }
 
+  // Event labels on taken-over screens (SETUP LONG, NO RISK, BREAKING…), above the desk.
+  const tagF = fs(3.4, 8, 12);
+  ctx.font = `${tagF}px ${pixel}`;
+  ctx.textAlign = "center";
+  for (const a of w.agents) {
+    if (a.hidden || !a.screen?.label || w.alarm) continue;
+    const d = w.map.desks[a.role].desk;
+    const p = toScreen(v, d.x * TILE + 8, d.y * TILE - 8);
+    const text = a.screen.mode === "setup" ? `SETUP ${a.screen.label}` : a.screen.label;
+    const tw = ctx.measureText(text).width + tagF;
+    const bg = { setup: a.screen.label === "SHORT" ? "#b91c1c" : "#15803d", risk: "#b91c1c", breaking: "#ca8a04", alert: "#0e7490" }[a.screen.mode];
+    ctx.fillStyle = bg;
+    ctx.fillRect(Math.round(p.x - tw / 2), Math.round(p.y - tagF * 0.65), Math.round(tw), Math.round(tagF * 1.3));
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, p.x, p.y + 1);
+  }
+
   // Speech bubbles, and the name tag of whoever is hovered.
   const bubbleF = fs(8, 14, 19);
   const bounds = v.frame ?? { l: v.ox, r: v.ox + WORLD_W * s };
   for (const a of w.agents) {
     if (a.hidden) continue;
-    const head = toScreen(v, a.px, a.py - SPRITE_H - 1);
+    // Sit the bubble above any status icon rather than over it.
+    const head = toScreen(v, a.px, a.py - SPRITE_H - 1 - (a.status ? ICON_SIZE + 3 : 0));
     if (a.bubble) bubble(ctx, bubbleF, head.x, head.y, a.bubble.text, a.bubble.alert, vt, false, bounds);
-    else if (hovered === a.role) bubble(ctx, bubbleF, head.x, head.y, ROLE_BY_ID[a.role].title, false, vt, true, bounds);
+    else if (hovered === a.role) bubble(ctx, bubbleF, head.x, head.y, `${ROLE_BY_ID[a.role].name} · ${ROLE_BY_ID[a.role].title}`, false, vt, true, bounds);
   }
 
   // Kimi's name tag, and the key prompt over whatever can be used.
@@ -609,7 +653,10 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, v: View, w: World, fl
     ctx.fillStyle = "#fef3c7";
     ctx.fillText("KIMI", head.x, head.y - f / 2 - 2);
     if (target) {
-      const label = { person: "Talk", desk: "Peek at screen", bell: "Ring the bell", coffee: "Grab a coffee", wall: "Open the video wall" }[target.kind];
+      const label =
+        target.kind === "desk"
+          ? `Open ${TITLES[ROLE_BY_ID[target.role].opens]}`
+          : { person: "Talk", bell: "Ring the bell", coffee: "Grab a coffee", wall: "Open the video wall" }[target.kind];
       const at = toScreen(v, target.x, target.y - (target.kind === "person" ? SPRITE_H + 12 : 14));
       const pf = fs(7, 13, 18);
       ctx.font = `${pf}px ${vt}`;

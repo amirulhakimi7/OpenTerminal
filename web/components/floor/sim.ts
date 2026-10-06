@@ -17,6 +17,11 @@ export type State = "seated" | "walking" | "talking" | "offDuty";
 
 export type Bubble = { text: string; ttl: number; alert: boolean };
 
+/** A pixel icon over someone's head saying what they're dealing with. */
+export type StatusIcon = "alert" | "risk" | "news" | "idea" | "phone" | "setup" | "calendar";
+/** A desk's screens taken over by an event; `label` is printed on them (e.g. LONG). */
+export type ScreenMode = "setup" | "risk" | "breaking" | "alert";
+
 /** One confetti square. World px; velocity in px/s. */
 export type Particle = { x: number; y: number; vx: number; vy: number; color: string; life: number };
 
@@ -41,6 +46,9 @@ export type Agent = {
   carrying: boolean;
   deliverTo: RoleId | null; // who reacts when this agent arrives
   bubble: Bubble | null;
+  status: { icon: StatusIcon; ttl: number } | null;
+  screen: { mode: ScreenMode; ttl: number; label: string | null } | null;
+  standing: number; // seconds left standing up at the desk (seated agents only)
 };
 
 export type World = {
@@ -98,6 +106,9 @@ export function createWorld(map: FloorMap, seed = 1): World {
       carrying: false,
       deliverTo: null,
       bubble: null,
+      status: null,
+      screen: null,
+      standing: 0,
     };
   });
   const byRole = Object.fromEntries(agents.map((a) => [a.role, a])) as Record<RoleId, Agent>;
@@ -106,6 +117,20 @@ export function createWorld(map: FloorMap, seed = 1): World {
 
 function say(a: Agent, text: string, ttl = 5, alert = false) {
   a.bubble = { text, ttl, alert };
+}
+
+function mark(a: Agent, icon: StatusIcon, ttl = 6) {
+  if (!a.hidden) a.status = { icon, ttl };
+}
+
+/** Take over someone's screens; `Infinity` lasts until cleared. */
+function show(a: Agent, mode: ScreenMode, ttl: number, label: string | null = null) {
+  if (!a.hidden) a.screen = { mode, ttl, label };
+}
+
+/** Stand up at the desk for a moment (only from the chair). */
+function stand(a: Agent, ttl: number) {
+  if (!a.hidden && a.state === "seated") a.standing = ttl;
 }
 
 /** A walkable tile beside someone's seat, so visitors stand next to them, not on them. */
@@ -167,8 +192,13 @@ function arrive(w: World, a: Agent) {
       a.dir = 3;
       break;
     case "gather":
+      // Arriving after the call is over (a long walk from the far rooms): straight back.
+      if (!w.alarm && !w.warRoom) {
+        goHome(w, a);
+        break;
+      }
       a.state = "talking";
-      a.timer = Infinity; // until FORCE FLAT ends
+      a.timer = Infinity; // until FORCE FLAT / the war room ends
       a.dir = 3;
       break;
     case "leave":
@@ -224,7 +254,14 @@ function ambient(w: World, a: Agent, snap: FloorSnapshot) {
     const fact = factFor(a.role, snap);
     if (fact) say(a, fact, 5);
   } else if (r < 0.66) {
-    say(a, "📞 …", 3); // on the phone
+    // Small habits that match the job: the broker desk works the phone,
+    // the quants have ideas, everyone else takes a call.
+    const station = ROLE_BY_ID[a.role].station;
+    if (station === "broker") {
+      mark(a, "phone", 5);
+      say(a, "Checking broker link…", 4);
+    } else if (station === "quant" || station === "strategy") mark(a, "idea", 4);
+    else say(a, "📞 …", 3);
   }
 }
 
@@ -251,6 +288,9 @@ export function step(w: World, dt: number, snap: FloorSnapshot) {
       a.bubble.ttl -= dt;
       if (a.bubble.ttl <= 0) a.bubble = null;
     }
+    if (a.status && (a.status.ttl -= dt) <= 0) a.status = null;
+    if (a.screen && (a.screen.ttl -= dt) <= 0) a.screen = null;
+    a.standing = a.state === "seated" ? Math.max(0, a.standing - dt) : 0;
     if (a.pending) {
       a.delay -= dt;
       if (a.delay <= 0) {
@@ -303,16 +343,21 @@ export function faceVisitor(w: World, role: RoleId, x: number) {
 /** React to a data change. */
 export function applyEvent(w: World, ev: FloorEvent) {
   const on = (role: RoleId) => !w.byRole[role].hidden && !w.closed;
-  const deliver = (from: RoleId, to: RoleId, text: string, color: string, speed = WALK, alert = false) => {
+  // `rise`: seconds spent standing at the desk, reacting, before setting off.
+  const deliver = (from: RoleId, to: RoleId, text: string, color: string, speed = WALK, alert = false, rise = 0) => {
     if (!on(from)) return;
     const a = w.byRole[from];
-    const life = 7;
+    const life = 7 + rise;
     w.links.push({ from: center(w.map.desks[from].seat), to: center(w.map.desks[to].seat), color, ttl: life, life });
     a.carrying = true;
     a.deliverTo = to;
-    say(a, text, 7, alert);
-    goTo(w, a, besideSeat(w, to), "talk", speed);
+    say(a, text, 7 + rise, alert);
+    if (rise > 0 && a.state === "seated") {
+      stand(a, rise);
+      schedule(a, besideSeat(w, to), "talk", rise, speed);
+    } else goTo(w, a, besideSeat(w, to), "talk", speed);
   };
+  const role = (r: RoleId) => w.byRole[r];
 
   switch (ev.kind) {
     case "marketClosed": {
@@ -383,6 +428,7 @@ export function applyEvent(w: World, ev: FloorEvent) {
       for (let i = 0; i < Math.min(4, awake.length); i++) {
         const a = awake[Math.floor(w.rng() * awake.length)];
         say(a, "😱", 4);
+        mark(a, "alert", 5);
         goTo(w, a, besideSeat(w, "risk_manager"), "talk", RUN);
       }
       if (on("risk_manager")) say(w.byRole.risk_manager, `Sell-off: ${ev.text}`, 6, true);
@@ -411,24 +457,48 @@ export function applyEvent(w: World, ev: FloorEvent) {
       break;
     case "riskBlocked":
       w.riskAlarm = true;
-      deliver("risk_manager", "trade_analyst", `NO NEW RISK: ${ev.text}`, "#ef4444", RUN, true);
+      // Red screens on the risk desk and the trading desk until the block clears.
+      show(role("risk_manager"), "risk", Infinity, "NO RISK");
+      show(role("trade_analyst"), "risk", Infinity, "NO RISK");
+      mark(role("risk_manager"), "risk", 10);
+      deliver("risk_manager", "trade_analyst", `NO NEW RISK: ${ev.text}`, "#ef4444", RUN, true, 2);
       break;
     case "riskClear":
       w.riskAlarm = false;
+      for (const a of w.agents) if (a.screen?.mode === "risk") a.screen = null;
+      if (role("risk_manager").status?.icon === "risk") role("risk_manager").status = null;
       if (on("risk_manager")) say(w.byRole.risk_manager, "Risk OK ✓", 5);
       break;
-    case "signal":
-      deliver("strategy_analyst", "trade_analyst", `New setup: ${ev.text}`, "#a78bfa");
-      if (on("quant_analyst")) say(w.byRole.quant_analyst, "Checking size…", 4);
+    case "signal": {
+      // A setup, not an order: the screens say which way, a person decides.
+      const side = /\b(LONG|SHORT)\b/i.exec(ev.text)?.[1].toUpperCase() ?? null;
+      mark(role("strategy_analyst"), "idea", 6);
+      show(role("strategy_analyst"), "setup", 10, side);
+      show(role("trade_analyst"), "setup", 14, side);
+      deliver("strategy_analyst", "trade_analyst", `New setup: ${ev.text}`, "#a78bfa", WALK, false, 1.2);
+      if (on("quant_researcher")) {
+        say(w.byRole.quant_researcher, "Checking the stats…", 4);
+        mark(role("quant_researcher"), "setup", 5);
+      }
       break;
+    }
     case "headline":
-      deliver("news_analyst", "trade_analyst", ev.text.length > 46 ? ev.text.slice(0, 45) + "…" : ev.text, "#facc15");
-      if (on("broadcast_analyst")) say(w.byRole.broadcast_analyst, "📺 On air now", 4);
+      mark(role("news_analyst"), "news", 7);
+      show(role("news_analyst"), "breaking", 9, "BREAKING");
+      deliver("news_analyst", "trade_analyst", ev.text.length > 46 ? ev.text.slice(0, 45) + "…" : ev.text, "#facc15", WALK, false, 1.5);
+      if (on("broadcast_analyst")) {
+        say(w.byRole.broadcast_analyst, "📺 On air now", 4);
+        show(role("broadcast_analyst"), "breaking", 8, "LIVE");
+      }
       break;
     case "bigMover":
-      deliver("monitoring_analyst", "trade_analyst", `Mover: ${ev.text}`, "#22d3ee", RUN);
+      mark(role("monitoring_analyst"), "alert", 7);
+      show(role("monitoring_analyst"), "alert", 8, "MOVER");
+      deliver("monitoring_analyst", "trade_analyst", `Mover: ${ev.text}`, "#22d3ee", RUN, false, 2);
       break;
     case "econ":
+      mark(role("macro_analyst"), "calendar", 7);
+      mark(role("economic_research_analyst"), "calendar", 7);
       deliver("macro_analyst", "economic_research_analyst", ev.text, "#fbbf24");
       break;
   }

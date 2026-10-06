@@ -3,7 +3,7 @@
 //
 //   ═══════════════════════ LED ticker tape ═══════════════════════
 //   ┌─ RESEARCH ─────────┐┌─ TRADING FLOOR ── video wall ─┐┌─ RISK ──┐
-//   │ 12 analyst desks   ││ 4 desks around the hub, bell  ││ RM desk │
+//   │ 12 analyst desks   ││ 3 desks around the hub, bell  ││ RM desk │
 //   └──────── door ──────┘└──────────── door ─────────────┘└─ door ──┘
 //   ═══════════════════════════ corridor ═══════════════════════════
 //   ┌ PORTFOLIO ┐┌ CONFERENCE ┐┌lobby┐┌ PANTRY ┐┌ IT & SYSTEMS ┐
@@ -120,21 +120,22 @@ export function buildFloor(): FloorMap {
 
   // Desks, three tiles wide, everyone facing up at their screens.
   const spot = (dx: number, dy: number): DeskSpot => ({ desk: { x: dx, y: dy }, seat: { x: dx, y: dy + 1 }, facing: 3 });
-  const research: DeskSpot[] = [];
-  for (const y of [4, 7, 10]) for (const x of [2, 6, 10, 14]) research.push(spot(x, y));
-  const spots: DeskSpot[] = [
-    spot(18, 6), spot(29, 6), spot(18, 9), spot(29, 9), // trading operations, around the hub
-    ...research,
-    spot(4, 18), // portfolio manager
-    spot(35, 5), // risk manager
-  ];
-  const ordered = [...ROLES].sort((a, b) => deptOrder(a.dept) - deptOrder(b.dept));
+  const desksBy: Record<DeptId, DeskSpot[]> = {
+    ops: [spot(18, 6), spot(18, 9), spot(29, 7)], // trading operations, around the hub
+    research: [],
+    risk: [spot(4, 18), spot(35, 5)], // portfolio manager, risk manager
+  };
+  for (const y of [4, 7, 10]) for (const x of [2, 6, 10, 14]) desksBy.research.push(spot(x, y));
   const desks = {} as Record<RoleId, DeskSpot>;
-  ordered.forEach((role, i) => {
-    const s = spots[i];
-    for (let k = -1; k <= 1; k++) set(s.desk.x + k, s.desk.y, T.Desk);
-    desks[role.id] = s;
-  });
+  for (const dept of ["ops", "research", "risk"] as const) {
+    const staff = ROLES.filter((r) => r.dept === dept);
+    if (staff.length > desksBy[dept].length) throw new Error(`not enough desks for ${dept}`);
+    staff.forEach((role, i) => {
+      const s = desksBy[dept][i];
+      for (let k = -1; k <= 1; k++) set(s.desk.x + k, s.desk.y, T.Desk);
+      desks[role.id] = s;
+    });
+  }
 
   // Furniture.
   for (const [x, y] of [[1, 3], [15, 3], [8, 3], [30, 3], [17, 11], [30, 11], [32, 11], [38, 11], [1, 22], [10, 16], [17, 22], [22, 22], [31, 22], [8, 22]]) {
@@ -230,8 +231,4 @@ export function buildFloor(): FloorMap {
       { ...c(38.5, 7.3), r: 30 },
     ],
   };
-}
-
-function deptOrder(d: DeptId): number {
-  return d === "ops" ? 0 : d === "research" ? 1 : 2;
 }

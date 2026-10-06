@@ -191,7 +191,6 @@ export function factFor(role: RoleId, s: FloorSnapshot): string | null {
     case "macro_analyst":
       return s.econEvent ? clip(`${s.econEvent.title} · ${s.econEvent.when}`) : null;
     case "strategy_analyst":
-    case "quant_analyst":
     case "quant_researcher":
       return s.signal ? s.signal.text : null;
     case "broker_rm":
@@ -235,7 +234,6 @@ export function reportFor(role: RoleId, s: FloorSnapshot, offDuty = false): stri
         ? [`Next big release: ${s.econEvent.title}.`, `That's ${s.econEvent.when}.`, "We'll convene the war room five minutes before."]
         : ["No high-impact release on the calendar soon."];
     case "strategy_analyst":
-    case "quant_analyst":
     case "quant_researcher":
       return s.signal ? [`Latest setup: ${s.signal.text}.`, "Sizing is on the LucidFlex Risk panel. Execution is yours."] : ["No setup that passes the rules right now.", "I'll bring it over the moment one does."];
     case "broker_rm":

@@ -4,6 +4,7 @@
 // tile above, which is what gives the floor its depth.
 
 import type { FloorTheme } from "./floors";
+import type { Station } from "./roster";
 import type { Decor, Ground } from "./tilemap";
 
 type Ctx = CanvasRenderingContext2D;
@@ -148,9 +149,14 @@ export function exitDoor(ctx: Ctx, X: number, Y: number, accent: string) {
 
 // ---- desks and chairs ---------------------------------------------------------
 
-/** Where the three monitors on a desk show their charts, for the live pass. */
-export function deskScreens(X: number, Y: number) {
-  return [-8, 8, 24].map((cx) => ({ x: X + cx - 6, y: Y - 5, w: 12, h: 7 }));
+/**
+ * Where a desk's monitors show their picture, for the live pass: three on
+ * every desk, and a fourth stacked on top at the market-monitoring desk.
+ */
+export function deskScreens(X: number, Y: number, station?: Station) {
+  const out = [-8, 8, 24].map((cx) => ({ x: X + cx - 6, y: Y - 5, w: 12, h: 7 }));
+  if (station === "monitor") out.push({ x: X + 2, y: Y - 14, w: 12, h: 7 });
+  return out;
 }
 
 /** A three-tile desk centred on tile (X, Y): white top, three monitors, keyboard. */
@@ -174,8 +180,122 @@ export function desk(ctx: Ctx, X: number, Y: number) {
   px(ctx, X + 1, Y + 6, 13, 2, "#454a53"); // keyboard
   px(ctx, X + 1, Y + 6, 13, 1, "#5b616c");
   px(ctx, X + 17, Y + 6, 2, 2, "#454a53"); // mouse
-  px(ctx, X - 12, Y + 5, 3, 3, "#f8fafc"); // mug
-  px(ctx, X - 12, Y + 5, 3, 1, "#7c4a2d");
+}
+
+/** Where the risk desk's warning light sits, lit in the live pass. */
+export const riskLight = (X: number, Y: number) => ({ x: X + 24, y: Y + 5 });
+
+/**
+ * What sits on a desk, by job: you can tell who works there without reading
+ * a label. Left end is X-14..X-3, right end X+20..X+30 (desk top is Y+3..Y+9).
+ */
+export function deskProps(ctx: Ctx, X: number, Y: number, station: Station) {
+  const mug = (x: number) => {
+    px(ctx, x, Y + 5, 3, 3, "#f8fafc");
+    px(ctx, x, Y + 5, 3, 1, "#7c4a2d");
+  };
+  const papers = (x: number) => {
+    px(ctx, x, Y + 4, 8, 5, "#e5e7eb");
+    px(ctx, x + 1, Y + 5, 6, 1, "#94a3b8");
+    px(ctx, x + 1, Y + 7, 4, 1, "#94a3b8");
+  };
+  const deskPhone = (x: number) => {
+    px(ctx, x, Y + 5, 7, 4, "#1f2937");
+    px(ctx, x, Y + 3, 7, 2, "#111827"); // handset
+    px(ctx, x + 1, Y + 6, 5, 1, "#4ade80");
+  };
+  switch (station) {
+    case "broker":
+      deskPhone(X + 22);
+      px(ctx, X - 13, Y + 3, 6, 1, "#111827"); // headset band
+      px(ctx, X - 14, Y + 4, 2, 3, "#111827");
+      px(ctx, X - 9, Y + 4, 2, 3, "#111827");
+      px(ctx, X - 5, Y + 5, 2, 2, "#38bdf8"); // mic light
+      break;
+    case "trade":
+      deskPhone(X + 22);
+      papers(X - 13);
+      break;
+    case "quant":
+      px(ctx, X - 14, Y + 1, 10, 6, "#2b2f37"); // laptop lid
+      px(ctx, X - 13, Y + 2, 8, 4, "#0f172a");
+      px(ctx, X - 12, Y + 3, 3, 1, "#a78bfa");
+      px(ctx, X - 12, Y + 4, 5, 1, "#4ade80");
+      px(ctx, X - 15, Y + 7, 12, 2, "#9ca3af"); // laptop base
+      px(ctx, X + 23, Y + 3, 5, 6, "#374151"); // calculator
+      px(ctx, X + 24, Y + 4, 3, 1, "#a7f3d0");
+      for (let i = 0; i < 2; i++) px(ctx, X + 24, Y + 6 + i * 2, 3, 1, "#9ca3af");
+      break;
+    case "strategy":
+      px(ctx, X + 21, Y + 4, 8, 5, "#fef08a"); // notepad
+      px(ctx, X + 22, Y + 5, 5, 1, "#a16207");
+      px(ctx, X + 22, Y + 7, 3, 1, "#a16207");
+      px(ctx, X + 28, Y + 3, 1, 5, "#1d4ed8"); // pen
+      mug(X - 12);
+      break;
+    case "chart":
+      px(ctx, X - 14, Y + 4, 9, 5, "#f8fafc"); // printed chart
+      for (let i = 0; i < 7; i++) px(ctx, X - 13 + i, Y + 7 - Math.round(Math.sin(i) + i * 0.3), 1, 1, "#16a34a");
+      px(ctx, X + 22, Y + 6, 7, 1, "#9ca3af"); // ruler
+      break;
+    case "data":
+      mug(X - 12);
+      px(ctx, X + 21, Y + 5, 9, 3, "#454a53"); // second keypad
+      for (let i = 0; i < 4; i++) px(ctx, X + 22 + i * 2, Y + 6, 1, 1, "#9ca3af");
+      break;
+    case "monitor": {
+      // The fourth screen, on a pole above the middle one.
+      px(ctx, X + 7, Y - 7, 2, 2, "#2a2d33");
+      px(ctx, X + 1, Y - 15, 14, 9, "#121419");
+      px(ctx, X + 1, Y - 15, 14, 1, "#2b2f37");
+      mug(X - 12);
+      break;
+    }
+    case "news":
+      px(ctx, X + 20, Y + 3, 10, 6, "#f1f5f9"); // newspaper
+      px(ctx, X + 21, Y + 4, 8, 1, "#0f172a");
+      px(ctx, X + 21, Y + 6, 3, 2, "#94a3b8");
+      px(ctx, X + 25, Y + 6, 4, 1, "#94a3b8");
+      px(ctx, X + 25, Y + 7, 4, 1, "#94a3b8");
+      mug(X - 12);
+      break;
+    case "research": {
+      const books = ["#1d4ed8", "#b91c1c", "#15803d"];
+      books.forEach((c, i) => px(ctx, X + 21 + (i % 2), Y + 6 - i * 2, 8, 2, c)); // book stack
+      papers(X - 14);
+      break;
+    }
+    case "macro":
+      px(ctx, X + 24, Y + 7, 4, 2, "#78350f"); // globe stand
+      px(ctx, X + 23, Y + 1, 6, 6, "#2563eb"); // globe
+      px(ctx, X + 24, Y + 2, 2, 2, "#22c55e");
+      px(ctx, X + 26, Y + 4, 2, 2, "#22c55e");
+      px(ctx, X - 13, Y + 3, 7, 6, "#f8fafc"); // desk calendar
+      px(ctx, X - 13, Y + 3, 7, 2, "#ef4444");
+      break;
+    case "broadcast":
+      px(ctx, X + 25, Y + 3, 1, 6, "#4b5563"); // mic stand
+      px(ctx, X + 23, Y + 8, 5, 1, "#4b5563");
+      px(ctx, X + 24, Y, 3, 4, "#1f2937"); // mic
+      px(ctx, X + 24, Y, 3, 1, "#9ca3af");
+      px(ctx, X - 14, Y + 4, 7, 4, "#1f2937"); // headphones
+      px(ctx, X - 13, Y + 5, 5, 2, "#ef4444");
+      break;
+    case "portfolio":
+      px(ctx, X + 25, Y + 4, 1, 4, "#b8892f"); // banker's lamp
+      px(ctx, X + 22, Y + 8, 7, 1, "#b8892f");
+      px(ctx, X + 21, Y + 1, 9, 3, "#15803d");
+      px(ctx, X + 21, Y + 1, 9, 1, "#4ade80");
+      px(ctx, X - 14, Y + 4, 9, 5, "#7c5a2b"); // folder
+      px(ctx, X - 14, Y + 4, 4, 1, "#a47a3d");
+      break;
+    case "risk":
+      px(ctx, X + 23, Y + 4, 5, 5, "#374151"); // warning light base (lit live)
+      px(ctx, X - 14, Y + 3, 9, 6, "#f59e0b"); // binders
+      px(ctx, X - 11, Y + 3, 1, 6, "#b45309");
+      px(ctx, X - 8, Y + 3, 1, 6, "#b45309");
+      break;
+  }
 }
 
 /** An office chair seen from behind, drawn over whoever sits in it. */
