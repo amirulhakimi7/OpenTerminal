@@ -10,6 +10,7 @@ import {
   AreaSeries,
   BarSeries,
   type IChartApi,
+  type LogicalRange,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { apiGet, fmt, fmtBig, type Candle } from "../../lib/api";
@@ -40,6 +41,10 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const [legend, setLegend] = useState<Candle | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  // The bars in view, kept across the rebuild each data refresh does, so a
+  // zoom or a pan survives the next poll. Keyed so a new symbol or range starts fitted.
+  const viewRef = useRef<{ key: string; range: LogicalRange; bars: number } | null>(null);
+  const viewKey = `${symbol}|${range}`;
 
   const { data: candles, error } = useQuery({
     queryKey: ["history", symbol, range],
@@ -137,9 +142,10 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       timeScale: { borderColor: "#232a37", timeVisible: range === "1D" || range === "5D" },
       rightPriceScale: { borderColor: "#232a37" },
       autoSize: true,
-      // Mouse-wheel is left free for page scrolling — zoom via drag, pinch, or the range buttons instead.
-      handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
-      handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true },
+      // Like any charting terminal: wheel / trackpad zooms and scrolls the chart,
+      // drag pans, and dragging an axis stretches it. The page scrolls outside the chart.
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
     });
     chartRef.current = chart;
 
@@ -217,12 +223,27 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       if (hit) setLegend(hit);
     });
 
-    chart.timeScale().fitContent();
+    const saved = viewRef.current;
+    if (saved && saved.key === viewKey) {
+      // Watching the latest bar: slide along as new bars arrive. Scrolled back: stay put.
+      const grew = candles.length - saved.bars;
+      const atEdge = saved.range.to >= saved.bars - 1.5;
+      const shift = atEdge && grew > 0 ? grew : 0;
+      chart.timeScale().setVisibleLogicalRange({ from: saved.range.from + shift, to: saved.range.to + shift });
+    } else chart.timeScale().fitContent();
     return () => {
+      const r = chart.timeScale().getVisibleLogicalRange();
+      viewRef.current = r ? { key: viewKey, range: r, bars: candles.length } : null;
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, chartType, indicatorData, range, byTime]);
+  }, [candles, chartType, indicatorData, range, byTime, viewKey]);
+
+  /** Back to the whole range (also: double-click the time axis). */
+  const fitAll = () => {
+    viewRef.current = null;
+    chartRef.current?.timeScale().fitContent();
+  };
 
   const toggleIndicator = (ind: Indicator) =>
     setActive((prev) => {
@@ -240,6 +261,9 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
             {r}
           </button>
         ))}
+        <button className="term-btn" onClick={fitAll} title="Show the whole range again (or double-click the time axis)">
+          ⟲ Fit
+        </button>
         <span className="w-2" />
         {CHART_TYPES.map((t) => (
           <button key={t} className={`term-btn ${chartType === t ? "active" : ""}`} onClick={() => setChartType(t)}>

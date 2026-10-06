@@ -13,6 +13,7 @@ import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
+import { tradingWeek, type EarningsDay } from "../earningsWeek.js";
 
 export const marketRouter = Router();
 
@@ -236,6 +237,10 @@ marketRouter.get("/history/:symbol", async (req, res) => {
         ? binance.history(symbol, rangeKey)
         : isVix(symbol)
         ? vixHistory(rangeKey)
+        : INTRADAY_RANGES.has(rangeKey)
+        ? // Nasdaq and Stooq only have daily bars: as a fallback they would draw a
+          // handful of daily candles under a 1D / 5D / 1M label. Intraday is Yahoo's.
+          yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)
         : withFallback([
             ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
             ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],
@@ -248,6 +253,9 @@ marketRouter.get("/history/:symbol", async (req, res) => {
     fail(req, res, err);
   }
 });
+
+/** Ranges drawn from intraday bars (5m / 15m / 1h). */
+const INTRADAY_RANGES = new Set(["1D", "5D", "1M"]);
 
 function yahooRange(rangeKey: string): { range: string; interval: string } {
   const map: Record<string, { range: string; interval: string }> = {
@@ -713,6 +721,20 @@ marketRouter.get("/calendar", async (req, res) => {
   if (symbols.length === 0) return res.status(400).json({ error: "symbols required" });
   try {
     const data = await cached(`calendar:${symbols.join(",")}`, 3_600_000, () => tradingview.earningsCalendar(symbols));
+    res.json(data);
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// ---- every US earnings report this trading week, by day ----
+
+marketRouter.get("/earnings-week", async (req, res) => {
+  const days = tradingWeek(new Date());
+  try {
+    const data: EarningsDay[] = await cached(`earnings-week:${days[0]}`, 1_800_000, () =>
+      Promise.all(days.map(async (date) => ({ date, rows: await nasdaq.earningsOnDate(date) })))
+    );
     res.json(data);
   } catch (err) {
     fail(req, res, err);

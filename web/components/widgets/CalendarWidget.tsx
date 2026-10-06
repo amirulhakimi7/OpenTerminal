@@ -97,10 +97,11 @@ function EconomicTab() {
           {events.map((e, i) => (
             <tr key={`${e.title}-${e.date}-${i}`}>
               <td className="!text-left dim whitespace-nowrap">
-                {new Date(e.date).toLocaleString(undefined, {
+                {new Date(e.date).toLocaleString("en-GB", {
                   timeZone: zone,
-                  month: "short",
                   day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
                   hour: "2-digit",
                   minute: "2-digit",
                   timeZoneName: "short",
@@ -120,7 +121,13 @@ function EconomicTab() {
   );
 }
 
-const fmtDate = (ts: number | null) => (ts ? new Date(ts * 1000).toLocaleDateString("en-US") : "—");
+/**
+ * dd/mm/yyyy. History rows are plain dates stored as UTC midnight, so they're
+ * read in UTC; upcoming reports carry their real time (e.g. 16:00 ET after the
+ * close), so they're read in New York: the US trading day they land on.
+ */
+const fmtDate = (ts: number | null, zone: "UTC" | "America/New_York" = "UTC") =>
+  ts ? new Date(ts * 1000).toLocaleDateString("en-GB", { timeZone: zone, day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 
 type EarningsHistoryRow = {
   fiscalQtrEnd: string;
@@ -224,8 +231,8 @@ function EarningsTab() {
               title="Click for earnings history"
             >
               <td className="!text-left text-[var(--text)] font-bold underline decoration-1">{e.symbol}</td>
-              <td className="dim">{fmtDate(e.lastEarningsDate)}</td>
-              <td className="amber">{fmtDate(e.nextEarningsDate)}</td>
+              <td className="dim">{fmtDate(e.lastEarningsDate, "America/New_York")}</td>
+              <td className="amber">{fmtDate(e.nextEarningsDate, "America/New_York")}</td>
               <td>{e.epsForecast != null ? `$${e.epsForecast.toFixed(2)}` : "—"}</td>
             </tr>
             {expanded === e.symbol && (
@@ -249,8 +256,192 @@ function EarningsTab() {
   );
 }
 
+type ReportTime = "pre" | "after" | "unknown";
+type WeekEarning = {
+  symbol: string;
+  name: string;
+  time: ReportTime;
+  epsForecast: number | null;
+  lastYearEps: number | null;
+  marketCap: number | null;
+  fiscalQuarter: string | null;
+  estimates: number | null;
+};
+type EarningsDay = { date: string; rows: WeekEarning[] };
+
+const TIME_LABEL: Record<ReportTime, { text: string; title: string }> = {
+  pre: { text: "☀ Pre", title: "Before the US open" },
+  after: { text: "☾ After", title: "After the US close" },
+  unknown: { text: "—", title: "Time not given" },
+};
+
+const CAP_FILTERS = [
+  { label: "≥ $10B", min: 10e9 },
+  { label: "≥ $1B", min: 1e9 },
+  { label: "ANY SIZE", min: 0 },
+] as const;
+
+const WEEK = "week"; // the day selector's "ALL": Monday to Friday together
+
+const usd = (n: number | null) => (n == null ? "—" : `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`);
+const cap = (n: number | null) =>
+  n == null ? "—" : n >= 1e12 ? `$${(n / 1e12).toFixed(2)}T` : n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : `$${(n / 1e6).toFixed(0)}M`;
+
+/** "2026-10-07" → "Wed 07/10/2026" (a calendar date: no time zone shift). */
+function dayLabel(date: string) {
+  const [y, m, d] = date.split("-").map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", { timeZone: "UTC", weekday: "short" });
+  return { weekday, dmy: `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}` };
+}
+
+/** Today's date in New York, where the reports are scheduled. */
+const todayET = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+
+function ThisWeekTab() {
+  const watchlist = useTerminal((s) => s.watchlist);
+  const [minCap, setMinCap] = useState<number>(1e9);
+  const [day, setDay] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const { data = [], isLoading, error } = useQuery({
+    queryKey: ["earnings-week"],
+    queryFn: () => apiGet<EarningsDay[]>("/api/earnings-week"),
+    staleTime: 1_800_000,
+  });
+
+  const today = todayET();
+  // Default to today, or the first day of the week shown (the weekend shows next week).
+  const shown = day ?? (data.some((d) => d.date === today) ? today : data[0]?.date ?? null);
+  const watched = new Set(watchlist);
+  // Your watchlist names always show, whatever their size.
+  const keep = (r: WeekEarning) => watched.has(r.symbol) || (r.marketCap ?? 0) >= minCap;
+  // One group per day shown: a single day, or the whole week for ALL.
+  const groups = useMemo(
+    () => (shown === WEEK ? data : data.filter((d) => d.date === shown)).map((d) => ({ date: d.date, rows: d.rows.filter(keep) })),
+    [data, shown, minCap, watchlist] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const total = groups.reduce((n, g) => n + g.rows.length, 0);
+
+  if (error) return <div className="p-2 down">Error: {(error as Error).message}</div>;
+  if (isLoading) return <div className="p-2 dim">Loading this week's earnings…</div>;
+
+  return (
+    <div>
+      <div className="flex gap-1 p-1 items-center flex-wrap">
+        <button
+          className={`term-btn ${shown === WEEK ? "active" : ""}`}
+          onClick={() => {
+            setDay(WEEK);
+            setExpanded(null);
+          }}
+          title="Every report from Monday to Friday"
+        >
+          ALL <span className="dim ml-1">{data.reduce((n, d) => n + d.rows.filter(keep).length, 0)}</span>
+        </button>
+        {data.map((d) => {
+          const { weekday, dmy } = dayLabel(d.date);
+          const n = d.rows.filter(keep).length;
+          return (
+            <button
+              key={d.date}
+              className={`term-btn ${shown === d.date ? "active" : ""}`}
+              onClick={() => {
+                setDay(d.date);
+                setExpanded(null);
+              }}
+              title={`${n} report${n === 1 ? "" : "s"} at this size`}
+            >
+              {weekday} {dmy.slice(0, 5)}
+              {d.date === today && <span className="up ml-1">●</span>}
+              <span className="dim ml-1">{n}</span>
+            </button>
+          );
+        })}
+        <span className="w-2" />
+        {CAP_FILTERS.map((f) => (
+          <button key={f.label} className={`term-btn ${minCap === f.min ? "active" : ""}`} onClick={() => setMinCap(f.min)}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+      {shown && data.length > 0 && (
+        <div className="px-2 pb-1 dim text-[11px]">
+          {shown === WEEK
+            ? `${dayLabel(data[0].date).dmy} – ${dayLabel(data[data.length - 1].date).dmy} · ${total} reports`
+            : `${dayLabel(shown).weekday} ${dayLabel(shown).dmy}${shown === today ? " · today" : ""}`}{" "}
+          · US reports, biggest first · ★ = on your watchlist
+        </div>
+      )}
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Sym</th>
+            <th>Company</th>
+            <th>Time</th>
+            <th>Qtr</th>
+            <th>EPS Est.</th>
+            <th>Last Yr</th>
+            <th>Mkt Cap</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <Fragment key={g.date}>
+              {shown === WEEK && (
+                <tr>
+                  <td colSpan={7} className="!text-left !py-1.5 font-semibold bg-white/[0.03]">
+                    {dayLabel(g.date).weekday} {dayLabel(g.date).dmy}
+                    {g.date === today && <span className="up ml-2">● today</span>}
+                    <span className="dim ml-2 font-normal">{g.rows.length}</span>
+                  </td>
+                </tr>
+              )}
+              {g.rows.map((r) => (
+            <Fragment key={`${g.date}-${r.symbol}`}>
+              <tr
+                onClick={() => setExpanded(expanded === `${g.date}-${r.symbol}` ? null : `${g.date}-${r.symbol}`)}
+                className="cursor-pointer"
+                title="Click for earnings history"
+              >
+                <td className="!text-left text-[var(--text)] font-bold underline decoration-1 whitespace-nowrap">
+                  {watched.has(r.symbol) && <span className="amber mr-1">★</span>}
+                  {r.symbol}
+                </td>
+                <td className="!text-left dim truncate max-w-[220px]">{r.name}</td>
+                <td className={r.time === "unknown" ? "dim" : "amber"} title={TIME_LABEL[r.time].title}>
+                  {TIME_LABEL[r.time].text}
+                </td>
+                <td className="dim">{r.fiscalQuarter ?? "—"}</td>
+                <td title={r.estimates != null ? `${r.estimates} analyst estimate${r.estimates === 1 ? "" : "s"}` : undefined}>{usd(r.epsForecast)}</td>
+                <td className="dim">{usd(r.lastYearEps)}</td>
+                <td>{cap(r.marketCap)}</td>
+              </tr>
+              {expanded === `${g.date}-${r.symbol}` && (
+                <tr>
+                  <td colSpan={7} className="!text-left p-0">
+                    <EarningsHistoryRows symbol={r.symbol} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          ))}
+            </Fragment>
+          ))}
+          {total === 0 && (
+            <tr>
+              <td colSpan={7} className="dim p-3">
+                No reports at this size. Try ANY SIZE.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function CalendarWidget() {
-  const [tab, setTab] = useState<"econ" | "earnings">("econ");
+  const [tab, setTab] = useState<"econ" | "week" | "earnings">("econ");
 
   return (
     <div>
@@ -258,11 +449,14 @@ export default function CalendarWidget() {
         <button className={`term-btn ${tab === "econ" ? "active" : ""}`} onClick={() => setTab("econ")}>
           ECONOMIC
         </button>
-        <button className={`term-btn ${tab === "earnings" ? "active" : ""}`} onClick={() => setTab("earnings")}>
-          EARNINGS
+        <button className={`term-btn ${tab === "week" ? "active" : ""}`} onClick={() => setTab("week")}>
+          THIS WEEK
+        </button>
+        <button className={`term-btn ${tab === "earnings" ? "active" : ""}`} onClick={() => setTab("earnings")} title="Next report for each watchlist symbol">
+          WATCHLIST
         </button>
       </div>
-      {tab === "econ" ? <EconomicTab /> : <EarningsTab />}
+      {tab === "econ" ? <EconomicTab /> : tab === "week" ? <ThisWeekTab /> : <EarningsTab />}
     </div>
   );
 }

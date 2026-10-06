@@ -1,4 +1,5 @@
 import type { Quote, Candle } from "./yahoo.js";
+import { byMarketCap, parseEarningRow, type WeekEarning } from "../earningsWeek.js";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const HEADERS = { "User-Agent": UA, Accept: "application/json", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
@@ -239,3 +240,10 @@ export async function earningsSurprise(symbol: string): Promise<EarningsSurprise
 }
 
 
+
+/** Every US company reporting on one ET date (YYYY-MM-DD), biggest first. */
+export async function earningsOnDate(date: string): Promise<WeekEarning[]> {
+  const data = await nfetch(`https://api.nasdaq.com/api/calendar/earnings?date=${encodeURIComponent(date)}`);
+  const rows: Record<string, unknown>[] = data.rows ?? [];
+  return byMarketCap(rows.map(parseEarningRow).filter((r): r is WeekEarning => r !== null));
+}
