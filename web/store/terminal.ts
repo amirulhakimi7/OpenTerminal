@@ -58,6 +58,10 @@ type TerminalState = {
   setFloorView: (v: "building" | "floor") => void;
   sound: boolean;
   setSound: (on: boolean) => void;
+  music: boolean; // background music on the trading floor and the street view
+  setMusic: (on: boolean) => void;
+  musicVolume: number; // 0..1
+  setMusicVolume: (v: number) => void;
   setAccount: (a: Partial<AccountInput>) => void;
   setActiveSymbol: (s: string) => void;
   setCommandOpen: (open: boolean) => void;
@@ -196,6 +200,10 @@ export const useTerminal = create<TerminalState>()(
       setFloorView: (v) => set({ floorView: v }),
       sound: false, // off until the user turns it on
       setSound: (on) => set({ sound: on }),
+      music: false, // off until the user turns it on
+      setMusic: (on) => set({ music: on }),
+      musicVolume: 0.5,
+      setMusicVolume: (v) => set({ musicVolume: Math.max(0, Math.min(1, v)) }),
       setAccount: (a) => set((st) => ({ account: { ...st.account, ...a } })),
       setActiveSymbol: (s) => set({ activeSymbol: s.toUpperCase() }),
       setCommandOpen: (open) => set({ commandOpen: open }),

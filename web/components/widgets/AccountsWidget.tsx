@@ -34,7 +34,7 @@ type BrokerSummary = { broker: string; env: string; accounts: Account[]; positio
 // Read-only view. Orders are placed in each broker's own app, never here.
 const BROKERS: Array<{ id: BrokerId; label: string; asset: string; ready: boolean; hint?: string }> = [
   { id: "moomoo", label: "moomoo", asset: "Stocks", ready: true },
-  { id: "hata", label: "Hata", asset: "Crypto", ready: false, hint: "Waiting for Hata API documentation (support@hata.io)." },
+  { id: "hata", label: "Hata", asset: "Crypto", ready: true },
   { id: "lucid", label: "Lucid", asset: "Futures", ready: true },
 ];
 

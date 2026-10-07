@@ -108,6 +108,8 @@ export function cryptoSnapshot(i: {
   global?: CryptoGlobalIn;
   news?: NewsIn[];
   econ?: EconIn[];
+  broker?: BrokerIn;
+  brokerError?: string | null;
   now: Date;
 }): FloorSnapshot {
   const pick = ["BTC", "ETH", "SOL"];
@@ -123,7 +125,7 @@ export function cryptoSnapshot(i: {
     headline: i.news?.[0]?.title ?? null,
     bigMover: i.rows ? biggestMover(i.rows.slice(0, 20), (r) => r.changePercent24h) : null,
     econEvent: nextEconEvent(i.econ, i.now),
-    brokerNote: "Hata — waiting for API documentation",
+    brokerNote: i.broker ? "Hata connected" : i.brokerError ? (/key not set/i.test(i.brokerError) ? "Hata — add the API key to brokers/.env" : "Hata offline") : null,
   };
 }
 

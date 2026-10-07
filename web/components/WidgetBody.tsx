@@ -43,7 +43,7 @@ export function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "recap": return <RecapWidget />;
     case "signals": return <SignalsWidget />;
     case "risk": return <RiskWidget />;
-    case "journal": return <JournalWidget />;
+    case "journal": return <JournalWidget widget={widget} />;
     case "accounts": return <AccountsWidget widget={widget} />;
     case "floor": return null;
   }

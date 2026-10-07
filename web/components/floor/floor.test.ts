@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { carYFor, FLOOR_BAND, floorAtPoint } from "./building";
 import { diffSnapshots, warRoomEvents } from "./events";
+import { floorMood, towerMood } from "./musicMood";
 import { findPath } from "./pathfind";
 import { createPlayer, drinkCoffee, fixtures, nearestInteractable, stepPlayer, walkTo } from "./player";
 import { ROLES } from "./roster";
@@ -512,5 +513,26 @@ describe("Kimi Tower street view", () => {
       expect(carYFor(f)).toBeGreaterThanOrEqual(FLOOR_BAND[f].y0);
       expect(carYFor(f) + 10).toBeLessThanOrEqual(FLOOR_BAND[f].y1);
     }
+  });
+});
+
+describe("music moods", () => {
+  const calm = { closed: false, alarm: false, warRoom: false, riskAlarm: false, panic: 0, rally: false, bellOpen: false };
+  it("follows the sky over the tower", () => {
+    expect(towerMood(2)).toBe("tower-night");
+    expect(towerMood(6)).toBe("tower-dawn");
+    expect(towerMood(12)).toBe("tower-day");
+    expect(towerMood(18.5)).toBe("tower-dusk");
+    expect(towerMood(21)).toBe("tower-night");
+  });
+  it("plays the most urgent mood on the floor", () => {
+    expect(floorMood(calm)).toBe("floor-calm");
+    expect(floorMood({ ...calm, bellOpen: true })).toBe("floor-open");
+    expect(floorMood({ ...calm, rally: true })).toBe("floor-rally");
+    expect(floorMood({ ...calm, riskAlarm: true, rally: true })).toBe("floor-tension");
+    expect(floorMood({ ...calm, panic: 2 })).toBe("floor-tension");
+    expect(floorMood({ ...calm, closed: true })).toBe("floor-closed");
+    expect(floorMood({ ...calm, warRoom: true, closed: true })).toBe("floor-warroom");
+    expect(floorMood({ ...calm, alarm: true, warRoom: true })).toBe("floor-flat");
   });
 });

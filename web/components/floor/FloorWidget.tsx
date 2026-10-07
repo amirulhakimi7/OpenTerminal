@@ -16,6 +16,8 @@ import { TITLES, WidgetBody } from "../WidgetBody";
 import { diffSnapshots, warRoomEvents, type FloorEvent } from "./events";
 import { B_H, B_W, carYFor, FLOOR_BAND, drawBuilding, drawBuildingOverlay, floorAtPoint, type BuildingState, type FloorStatus } from "./building";
 import { play, unlockAudio, type Sfx } from "../../lib/sfx";
+import { setMusicMood, setMusicVolume as applyMusicVolume, startMusic, stopMusic, type Mood } from "../../lib/music";
+import { floorMood, towerMood } from "./musicMood";
 import { FLOOR_ORDER, FLOORS, type FloorId } from "./floors";
 import { drawOverlay, drawWorld, hitTest, WORLD_H, WORLD_W, zoneAt, type View } from "./render";
 import { DEPARTMENTS, ROLES, ROLE_BY_ID, type RoleId } from "./roster";
@@ -67,6 +69,13 @@ function useFloorSnapshot(floor: FloorId): FloorSnapshot {
     retry: 0,
     enabled: is("equity"),
   });
+  const hata = useQuery({
+    queryKey: ["broker", "hata"],
+    queryFn: () => apiGet<BrokerIn>("/api/brokers/hata/summary"),
+    refetchInterval: 30_000,
+    retry: 0,
+    enabled: is("crypto"),
+  });
   const crypto = useQuery({
     queryKey: ["crypto"],
     queryFn: () => apiGet<CryptoIn[]>("/api/crypto"),
@@ -116,7 +125,15 @@ function useFloorSnapshot(floor: FloorId): FloorSnapshot {
       });
     }
     if (floor === "crypto") {
-      return cryptoSnapshot({ rows: crypto.data, global: cryptoGlobal.data, news: news.data, econ: econ.data, now });
+      return cryptoSnapshot({
+        rows: crypto.data,
+        global: cryptoGlobal.data,
+        news: news.data,
+        econ: econ.data,
+        broker: hata.data,
+        brokerError: hata.error ? (hata.error as Error).message : null,
+        now,
+      });
     }
     return futuresSnapshot({
       session: session.data,
@@ -185,6 +202,10 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
   const floorView = useTerminal((s) => s.floorView);
   const setFloorView = useTerminal((s) => s.setFloorView);
   const sound = useTerminal((s) => s.sound);
+  const music = useTerminal((s) => s.music);
+  const setMusic = useTerminal((s) => s.setMusic);
+  const musicVolume = useTerminal((s) => s.musicVolume);
+  const setMusicVolume = useTerminal((s) => s.setMusicVolume);
   const setSound = useTerminal((s) => s.setSound);
   const floor: FloorId = widget.floor ?? lastFloor;
   // A widget pinned to one floor has no building to go back to.
@@ -218,10 +239,37 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
     target: null as Interactable | null,
     follow: false, // when zoomed in, the camera pans to keep Kimi in view
     dialogOpen: false,
+    mood: "tower-night" as Mood,
+    moodCheck: 0,
     popupOpen: false,
   });
   live.current.mode = mode;
   live.current.sound = sound;
+
+  // Background music: on and off with the 🎵 button, its mood picked in the
+  // render loop. A browser only starts audio after a click or a key, so music
+  // left on from last time waits for the first one; it pauses while the tab
+  // is hidden and stops when the floor goes away.
+  useEffect(() => {
+    if (!music) {
+      stopMusic();
+      return;
+    }
+    const begin = () => startMusic(live.current.mood, useTerminal.getState().musicVolume);
+    begin();
+    const onGesture = () => begin();
+    const onVis = () => (document.hidden ? stopMusic() : begin());
+    window.addEventListener("pointerdown", onGesture, { once: true });
+    window.addEventListener("keydown", onGesture, { once: true });
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pointerdown", onGesture);
+      window.removeEventListener("keydown", onGesture);
+      document.removeEventListener("visibilitychange", onVis);
+      stopMusic();
+    };
+  }, [music]);
+  useEffect(() => applyMusicVolume(musicVolume), [musicVolume]);
   live.current.futuresOpen = cme.data ? ["open", "force_flat", "past_deadline"].includes(cme.data.phase) : null;
   const [doors, setDoors] = useState<"open" | "closed">("open");
   const [doorLabel, setDoorLabel] = useState("");
@@ -459,6 +507,13 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       setBox({ left: ox, top: oy, width: WORLD_W * scale, height: WORLD_H * scale });
     };
 
+    // Tell the music what's happening, once a second (it turns on the next bar).
+    const pickMood = (t: number, m: Mood) => {
+      if (t - live.current.moodCheck < 1000 && m === live.current.mood) return;
+      live.current.moodCheck = t;
+      live.current.mood = m;
+      setMusicMood(m);
+    };
     const frame = (t: number) => {
       if (!visible || !inView) {
         raf = 0;
@@ -491,7 +546,9 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
           return { id, open, onDuty: wld ? wld.agents.filter((a) => !a.hidden).length : open === false ? 1 : ROLES.length };
         });
         const local = new Date();
-        drawBuilding(bctx, b, statuses, local.getHours() + local.getMinutes() / 60);
+        const hour = local.getHours() + local.getMinutes() / 60;
+        pickMood(t, towerMood(hour));
+        drawBuilding(bctx, b, statuses, hour);
         const v = L.bview;
         ctx.imageSmoothingEnabled = false;
         ctx.fillStyle = "#04060a";
@@ -504,6 +561,18 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
       const { floor: f, snap: s, hovered, zone, selected: sel, view } = live.current;
       const w = worldFor(f);
       step(w, dt, s);
+      pickMood(
+        t,
+        floorMood({
+          closed: w.closed,
+          alarm: w.alarm,
+          warRoom: w.warRoom !== null,
+          riskAlarm: w.riskAlarm,
+          panic: w.panic,
+          rally: w.confetti.length > 0,
+          bellOpen: w.bell?.kind === "open",
+        })
+      );
 
       // Kimi: keys (unless a dialog is open), else any click-to-move route.
       const pl = playerFor(f);
@@ -849,6 +918,29 @@ export default function FloorWidget({ widget }: { widget: WidgetInstance }) {
         >
           {sound ? "🔊" : "🔇"}
         </button>
+        <button
+          className={`term-btn ${music ? "active" : ""}`}
+          title={music ? "Music on — follows the market (click to stop)" : "Play background music"}
+          onClick={() => {
+            unlockAudio();
+            setMusic(!music);
+          }}
+        >
+          🎵
+        </button>
+        {music && (
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={musicVolume}
+            onChange={(e) => setMusicVolume(Number(e.target.value))}
+            className="w-20 accent-[var(--amber)]"
+            title={`Music volume ${Math.round(musicVolume * 100)}%`}
+            aria-label="Music volume"
+          />
+        )}
         <span className="ml-auto hidden lg:flex gap-3 dim text-[11px] num">
           {([["NY", "America/New_York"], ["LDN", "Europe/London"], ["TYO", "Asia/Tokyo"], ["KL", "Asia/Kuala_Lumpur"]] as const).map(([l, tz]) => (
             <span key={l}>
@@ -1131,6 +1223,7 @@ function popupWidget(type: WidgetType, floor: FloorId, symbol: string | null): W
     type,
     symbol: symbol ?? undefined,
     linked: symbol == null, // a ticker picked here sticks to this popup
-    broker: type === "accounts" ? FLOOR_BROKER[floor] : undefined,
+    // Accounts show the floor's broker; the journal on the equity / crypto floor opens on that broker's trades.
+    broker: type === "accounts" || (type === "journal" && floor !== "futures") ? FLOOR_BROKER[floor] : undefined,
   };
 }

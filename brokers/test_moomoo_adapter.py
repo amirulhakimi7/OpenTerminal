@@ -122,3 +122,62 @@ def test_missing_account_pl_is_filled_from_its_positions() -> None:
     s = summarize("REAL", [acc, other], rows, NOW)
     assert s["accounts"][0]["unrealized_pl"] == 6.25
     assert s["accounts"][1]["unrealized_pl"] is None  # no positions: unknown, not zero
+
+
+# ---- trade history ----------------------------------------------------------
+
+from moomoo_adapter import history_windows, merge_fills, share_fees, to_fill  # noqa: E402
+
+DEAL = {
+    "code": "US.NVDA", "stock_name": "NVIDIA", "deal_market": "US", "deal_id": 186, "order_id": "FM1",
+    "qty": 2.0, "price": 183.9098, "trd_side": "BUY", "create_time": "2025-10-14 12:43:22.787", "status": "OK",
+}
+
+
+def test_fill_happy_path() -> None:
+    assert to_fill(DEAL, "3106") == {
+        "deal_id": "186", "order_id": "FM1", "acc_id": "3106", "symbol": "NVDA", "name": "NVIDIA",
+        "market": "US", "side": "BUY", "short": False, "qty": 2.0, "price": 183.9098, "time": "2025-10-14 12:43:22", "fee": None,
+    }
+
+
+def test_fill_folds_short_sides() -> None:
+    assert to_fill({**DEAL, "trd_side": "SELL_SHORT"}, "1")["side"] == "SELL"  # type: ignore[index]
+    assert to_fill({**DEAL, "trd_side": "SELL_SHORT"}, "1")["short"] is True  # type: ignore[index]
+    assert to_fill({**DEAL, "trd_side": "SELL"}, "1")["short"] is False  # type: ignore[index]
+    assert to_fill({**DEAL, "trd_side": "BUY_BACK"}, "1")["side"] == "BUY"  # type: ignore[index]
+
+
+def test_fill_skips_bad_rows() -> None:
+    assert to_fill({**DEAL, "status": "CANCELLED"}, "1") is None
+    assert to_fill({**DEAL, "qty": 0}, "1") is None
+    assert to_fill({**DEAL, "price": "N/A"}, "1") is None
+    assert to_fill({**DEAL, "trd_side": "WHAT"}, "1") is None
+    assert to_fill({}, "1") is None
+
+
+def test_merge_dedupes_today_against_history_and_sorts() -> None:
+    a = to_fill({**DEAL, "deal_id": 2, "create_time": "2026-10-06 12:34:50"}, "1")
+    b = to_fill({**DEAL, "deal_id": 1, "create_time": "2026-10-06 12:26:29"}, "1")
+    assert a and b
+    assert [f["deal_id"] for f in merge_fills([a, b, a])] == ["1", "2"]
+    assert merge_fills([]) == []
+
+
+def test_fees_split_by_quantity_within_an_order() -> None:
+    a = to_fill({**DEAL, "deal_id": 1, "qty": 1.0}, "1")
+    b = to_fill({**DEAL, "deal_id": 2, "qty": 3.0}, "1")
+    c = to_fill({**DEAL, "deal_id": 3, "order_id": "FM2"}, "1")
+    assert a and b and c
+    out = share_fees([a, b, c], {"FM1": 2.0})
+    assert [f["fee"] for f in out] == [0.5, 1.5, None]  # FM2 has no fee figure: unknown, not zero
+
+
+def test_history_windows_stay_under_moomoos_limit() -> None:
+    w = history_windows(datetime(2026, 10, 7, 12, 0), 718)
+    assert len(w) == 2
+    assert w[0][1] == "2026-10-07 12:00:00"
+    for start, end in w:
+        assert (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days <= 359
+    assert w[-1][0] == "2024-10-19 12:00:00"
+    assert history_windows(datetime(2026, 10, 7), 0) == []

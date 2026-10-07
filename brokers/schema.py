@@ -34,6 +34,31 @@ class Position(TypedDict):
     pl_pct: float | None
 
 
+class Fill(TypedDict):
+    """One execution: part or all of an order, as the broker reports it."""
+
+    deal_id: str
+    order_id: str
+    acc_id: str
+    symbol: str
+    name: str
+    market: str
+    side: str  # "BUY" or "SELL" (moomoo's SELL_SHORT / BUY_BACK fold into these)
+    short: bool  # a short sale or the buy that covers one (SELL_SHORT / BUY_BACK)
+    qty: float
+    price: float
+    time: str  # exchange-local wall time, "YYYY-MM-DD HH:MM:SS"
+    fee: float | None  # this fill's share of its order's fees; None when unknown
+
+
+class FillsReport(TypedDict):
+    broker: str
+    fills: list[Fill]  # oldest first
+    since: str  # how far back the history goes (exchange-local date)
+    notes: list[str]  # accounts skipped and why
+    updated_at: str
+
+
 class BrokerSummary(TypedDict):
     broker: str
     env: str

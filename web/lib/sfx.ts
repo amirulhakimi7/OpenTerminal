@@ -2,20 +2,12 @@
 // Off until the user turns sound on: browsers only allow audio after a
 // gesture, and a trading screen shouldn't start making noise uninvited.
 
+import { audioContext } from "./audio";
+import { duckMusic } from "./music";
+
 export type Sfx = "bell" | "siren" | "cheer" | "chime" | "gong" | "drop";
 
-let ctx: AudioContext | null = null;
-
-function audio(): AudioContext | null {
-  if (typeof window === "undefined") return null;
-  if (!ctx) {
-    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AC) return null;
-    ctx = new AC();
-  }
-  if (ctx.state === "suspended") void ctx.resume();
-  return ctx;
-}
+const audio = audioContext;
 
 /** Call from a click handler so the browser lets audio start. */
 export function unlockAudio() {
@@ -55,6 +47,7 @@ function noise(a: AudioContext, start: number, dur: number, gain: number, band: 
 export function play(kind: Sfx) {
   const a = audio();
   if (!a) return;
+  duckMusic(kind === "chime" ? 1.2 : 3.5); // any music steps back so the alert is heard
   const t = a.currentTime + 0.02;
   switch (kind) {
     case "bell": // the opening/closing bell: three strikes of a bright, inharmonic bell

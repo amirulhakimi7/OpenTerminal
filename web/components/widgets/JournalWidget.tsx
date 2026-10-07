@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { fmt, fmtUsd } from "../../lib/api";
 import { useJournal, useJournalMutations, useJournalSummary } from "../../lib/journal";
 import { journalDate, useCmeSession } from "../../lib/session";
+import type { WidgetInstance } from "../../store/terminal";
+import BrokerJournal from "./BrokerJournal";
 
 // Log of trades placed by hand (NinjaTrader, Tradesea, an exchange). It records;
 // it never sends an order anywhere.
@@ -16,7 +18,34 @@ function shiftDate(iso: string, days: number): string {
 
 const EMPTY = { symbol: "MCL", side: "LONG" as "LONG" | "SHORT", quantity: "1", entry: "", exit: "", fees: "", notes: "" };
 
-export default function JournalWidget() {
+/**
+ * Three journals: futures logged by hand (CL / MCL), equity read from moomoo,
+ * crypto read from Hata. Opened from the equity or crypto floor, the journal
+ * starts on that floor's book.
+ */
+export default function JournalWidget({ widget }: { widget?: WidgetInstance }) {
+  const [book, setBook] = useState<"futures" | "equity" | "crypto">(
+    widget?.broker === "moomoo" ? "equity" : widget?.broker === "hata" ? "crypto" : "futures"
+  );
+  return (
+    <div>
+      <div className="flex gap-1 px-2 pt-1.5">
+        <button className={`term-btn ${book === "futures" ? "active" : ""}`} onClick={() => setBook("futures")}>
+          FUTURES
+        </button>
+        <button className={`term-btn ${book === "equity" ? "active" : ""}`} onClick={() => setBook("equity")} title="Every buy and sell on your moomoo account">
+          EQUITY · moomoo
+        </button>
+        <button className={`term-btn ${book === "crypto" ? "active" : ""}`} onClick={() => setBook("crypto")} title="Every buy and sell on your Hata account">
+          CRYPTO · Hata
+        </button>
+      </div>
+      {book === "futures" ? <FuturesJournal /> : <BrokerJournal broker={book === "equity" ? "moomoo" : "hata"} />}
+    </div>
+  );
+}
+
+function FuturesJournal() {
   const { session } = useCmeSession();
   const today = journalDate(session);
   const [day, setDay] = useState<string | null>(null);
